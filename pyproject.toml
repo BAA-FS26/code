@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baa_synthetic_data"
+version = "0.1.0"
+description = "Evaluation of Synthetic Data as PET in ML"
+dependencies = [
+    "ucimlrepo",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+    "scipy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
