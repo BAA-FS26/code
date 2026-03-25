@@ -2,11 +2,12 @@
 classify.py
 
 Binary classification pipeline for the Adult Census Income dataset.
-Supports four modes:
-  - default: train with default hyperparameters and evaluate on val set
-  - sweep:   run a W&B hyperparameter sweep using val set only
-  - best:    train with best hyperparameters, evaluate on val, save model
-  - test:    evaluate saved model on test set (call once after tuning)
+Supports five modes:
+  - default:    train with default hyperparameters and evaluate on val set
+  - sweep:      run a W&B hyperparameter sweep using val set only
+  - fetch_best: fetch best hyperparameters from latest sweep and save to YAML
+  - best:       train with best hyperparameters, evaluate on val, save model
+  - test:       evaluate saved model on test set (call once after tuning)
 
 The test set is structurally separated from all tuning modes.
 It is only loaded and evaluated in 'test' mode to prevent data leakage.
@@ -18,7 +19,10 @@ Usage:
     # Run hyperparameter sweep
     python classify.py --mode sweep --classifier logistic_regression --data_source real
 
-    # Run with best parameters from sweep (saves model to disk)
+    # Fetch best parameters from sweep and save to config/
+    python classify.py --mode fetch_best --classifier logistic_regression --data_source real
+
+    # Run with best parameters (saves model to disk)
     python classify.py --mode best --classifier logistic_regression --data_source real --params config/best_logistic_regression.yaml
 
     # Final test evaluation (once per classifier, after tuning is complete)
@@ -55,14 +59,24 @@ from src.dataset.feature_engineering import (
 
 WANDB_PROJECT = "synthetic-data-eval"
 WANDB_ENTITY = "baa_fs26_pm"  # TODO: replace with your W&B entity
-DATA_DIR = Path("../../data/processed")
-CONFIG_DIR = Path("../../config")
-MODELS_DIR = Path("../../models")
+BASE_DIR   = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = BASE_DIR / "data" / "processed"
+CONFIG_DIR = BASE_DIR / "config"
+MODELS_DIR = BASE_DIR / "models"
 RANDOM_STATE = 42
-N_ESTIMATORS_RF = 300
+N_ESTIMATORS_RF = 300  # Fixed, not tuned (more trees is always better for RF)
 
 CLASSIFIERS = ["logistic_regression", "random_forest", "gradient_boosting"]
-DATA_SOURCES = ["real"]
+DATA_SOURCES = ["real"]  # extend with synthesizer names later
+
+PARAM_ABBREVIATIONS = {
+    "max_features": "mf",
+    "min_samples_leaf": "msl",
+    "max_depth": "md",
+    "learning_rate": "lr",
+    "max_leaf_nodes": "mln",
+    "C": "C",
+}
 
 
 # ── Data loading ─────────────────────────────────────────────────────────────
@@ -252,7 +266,7 @@ def compute_metrics(y_true, y_pred, y_proba, prefix: str) -> dict:
         y_true: True binary labels.
         y_pred: Predicted binary labels.
         y_proba: Predicted probabilities for the positive class.
-        prefix: Metric name prefix, e.g. 'val' or 'test'.
+        prefix: Metric name prefix, e.g. 'train', 'val' or 'test'.
 
     Returns:
         Dictionary of metrics ready for wandb.log().
@@ -277,7 +291,7 @@ def train_and_evaluate(
     save_model: bool = False,
 ) -> None:
     """
-    Train a classifier and evaluate on the validation set.
+    Train a classifier and evaluate on train and validation sets.
 
     Logs all metrics and hyperparameters to W&B. The test set is never
     loaded or evaluated in this function.
@@ -308,10 +322,12 @@ def train_and_evaluate(
         model = build_model(classifier_name, params)
         model.fit(X_train, y_train)
 
+        # Train metrics
         y_train_pred = model.predict(X_train)
         y_train_proba = model.predict_proba(X_train)[:, 1]
         wandb.log(compute_metrics(y_train, y_train_pred, y_train_proba, prefix="train"))
 
+        # Val metrics
         y_val_pred = model.predict(X_val)
         y_val_proba = model.predict_proba(X_val)[:, 1]
         wandb.log(compute_metrics(y_val, y_val_pred, y_val_proba, prefix="val"))
@@ -372,6 +388,48 @@ def evaluate_on_test(
         wandb.log(compute_metrics(y_test, y_test_pred, y_test_proba, prefix="test"))
 
 
+# ── Fetch best params ─────────────────────────────────────────────────────────
+
+
+def fetch_best_params(classifier_name: str, data_source: str) -> None:
+    """
+    Fetch the best hyperparameters from the latest W&B sweep and save
+    them to config/best_{classifier_name}.yaml.
+
+    Queries W&B for the run with the highest val_f1 among all sweep
+    runs for the given classifier and data source, then saves the
+    parameters to disk for use with --mode best.
+
+    Args:
+        classifier_name: One of 'logistic_regression', 'random_forest',
+                         'gradient_boosting'.
+        data_source: Data source identifier, e.g. 'real'.
+    """
+    api = wandb.Api()
+    runs = api.runs(
+        f"{WANDB_ENTITY}/{WANDB_PROJECT}",
+        filters={
+            "display_name": {"$regex": f"^{data_source}_{classifier_name}_sweep"},
+        },
+    )
+
+    best_run = max(runs, key=lambda r: r.summary.get("val_f1", 0))
+    best_params = {
+        k: v
+        for k, v in best_run.config.items()
+        if not k.startswith("_") and k != "classifier"
+    }
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = CONFIG_DIR / f"best_{classifier_name}.yaml"
+    with open(output_path, "w") as f:
+        yaml.dump(best_params, f)
+
+    print(f"Best params saved to {output_path.resolve()}")
+    print(f"Best val_f1: {best_run.summary.get('val_f1'):.4f}")
+    print(f"Params: {best_params}")
+
+
 # ── Sweep ─────────────────────────────────────────────────────────────────────
 
 
@@ -381,6 +439,8 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
 
     Loads sweep configuration from config/sweep_{classifier_name}.yaml.
     The sweep optimises val_f1 and never touches the test set.
+    Each run is named with abbreviated hyperparameter values for
+    readability in the W&B UI.
 
     Args:
         classifier_name: One of 'logistic_regression', 'random_forest',
@@ -397,7 +457,12 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
         with wandb.init() as run:
             if run is not None:
                 params = dict(wandb.config)
-                run_name = f"{data_source}_{classifier_name}_sweep"
+                param_str = "_".join(
+                    f"{PARAM_ABBREVIATIONS.get(k, k)}={v}"
+                    for k, v in params.items()
+                    if k != "classifier"
+                )
+                run_name = f"{data_source}_{classifier_name}_sweep_{param_str}"
 
                 run.name = run_name
 
@@ -421,12 +486,13 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["default", "sweep", "best", "test"],
+        choices=["default", "sweep", "fetch_best", "best", "test"],
         required=True,
         help=(
-            "default: train with default params, evaluate on val. "
+            "default: train with default params, evaluate on train and val. "
             "sweep: run W&B hyperparameter sweep using val set only. "
-            "best: train with best params, evaluate on val, save model. "
+            "fetch_best: fetch best params from sweep and save to config/. "
+            "best: train with best params, evaluate on train and val, save model. "
             "test: evaluate saved model on test set (once after tuning)."
         ),
     )
@@ -466,10 +532,17 @@ def main():
             data_source=args.data_source,
         )
 
+    elif args.mode == "fetch_best":
+        fetch_best_params(
+            classifier_name=args.classifier,
+            data_source=args.data_source,
+        )
+
     elif args.mode == "best":
         if args.params is None:
             raise ValueError("--params is required for --mode best.")
-        with open(args.params) as f:
+        params_path = CONFIG_DIR / Path(args.params).name
+        with open(params_path) as f:
             best_params = yaml.safe_load(f)
         train_and_evaluate(
             classifier_name=args.classifier,
