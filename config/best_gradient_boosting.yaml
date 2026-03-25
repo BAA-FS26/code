@@ -1,0 +1,3 @@
+learning_rate: 0.3
+max_leaf_nodes: 63
+min_samples_leaf: 50
