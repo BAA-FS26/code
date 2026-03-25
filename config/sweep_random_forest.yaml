@@ -1,8 +1,9 @@
 program: classify.py
-method: grid
+method: random
 metric:
   name: val_f1
   goal: maximize
+run_cap: 20
 parameters:
   classifier:
     value: random_forest
