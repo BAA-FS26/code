@@ -207,4 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 # Data files (generated locally)
-data/
+data/raw
+data/cleaned
+data/processed
+
+wandb
+models
