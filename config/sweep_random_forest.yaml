@@ -1,0 +1,14 @@
+program: classify.py
+method: grid
+metric:
+  name: val_f1
+  goal: maximize
+parameters:
+  classifier:
+    value: random_forest
+  max_features:
+    values: ["sqrt", "log2", 0.5]
+  min_samples_leaf:
+    values: [1, 5, 10, 20]
+  max_depth:
+    values: ["None", 5, 10, 20]

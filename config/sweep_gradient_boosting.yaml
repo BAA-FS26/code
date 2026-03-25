@@ -1,0 +1,14 @@
+program: classify.py
+method: grid
+metric:
+  name: val_f1
+  goal: maximize
+parameters:
+  classifier:
+    value: gradient_boosting
+  learning_rate:
+    values: [0.01, 0.05, 0.1, 0.3]
+  max_leaf_nodes:
+    values: [15, 31, 63, 127]
+  min_samples_leaf:
+    values: [10, 20, 50]

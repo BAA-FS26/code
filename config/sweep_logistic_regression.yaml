@@ -1,0 +1,10 @@
+program: classify.py
+method: grid
+metric:
+  name: val_f1
+  goal: maximize
+parameters:
+  classifier:
+    value: logistic_regression
+  C:
+    values: [0.001, 0.01, 0.1, 1, 10, 100]

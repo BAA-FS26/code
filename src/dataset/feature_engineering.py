@@ -66,7 +66,7 @@ def encode_target(df: pd.DataFrame) -> pd.Series:
     return df[TARGET_COL].map(TARGET_MAP)
 
 
-def _drop_target(df: pd.DataFrame) -> pd.DataFrame:
+def drop_target(df: pd.DataFrame) -> pd.DataFrame:
     """
     Drop the target column from a DataFrame.
 
@@ -197,7 +197,7 @@ def prepare_data_logistic_regression(
         is the encoded target Series.
     """
     y = encode_target(df)
-    X = np.asarray(preprocessor.transform(_drop_target(df)))
+    X = np.asarray(preprocessor.transform(drop_target(df)))
     return X, y
 
 
@@ -218,7 +218,7 @@ def prepare_data_random_forest(
         is the encoded target Series.
     """
     y = encode_target(df)
-    X = np.asarray(preprocessor.transform(_drop_target(df)))
+    X = np.asarray(preprocessor.transform(drop_target(df)))
     return X, y
 
 
@@ -242,7 +242,7 @@ def prepare_data_gradient_boosting(
         encoded target Series.
     """
     y = encode_target(df)
-    X = _drop_target(df).copy()
+    X = drop_target(df).copy()
     for col in CATEGORICAL_COLS:
         X[col] = X[col].astype("category")
     return X, y
