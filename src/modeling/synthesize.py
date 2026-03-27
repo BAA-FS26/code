@@ -161,11 +161,13 @@ def log_loss_values(synthesizer_name: str, synthesizer) -> None:
 
     if synthesizer_name == "ctgan":
         for _, row in loss_values.iterrows():
-            wandb.log({
-                "epoch": int(row["Epoch"]),
-                "loss_generator": row["Generator Loss"],
-                "loss_discriminator": row["Discriminator Loss"],
-            })
+            wandb.log(
+                {
+                    "epoch": int(row["Epoch"]),
+                    "loss_generator": row["Generator Loss"],
+                    "loss_discriminator": row["Discriminator Loss"],
+                }
+            )
 
     elif synthesizer_name == "tvae":
         epoch_loss = loss_values.groupby("Epoch")["Loss"].mean().reset_index()
@@ -242,12 +244,14 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
         synthetic_df.to_csv(synthetic_path, index=False)
         print(f"Synthetic data saved to {synthetic_path.resolve()}")
 
-        wandb.log({
-            "training_time_seconds": training_time,
-            "n_samples_train": n_samples,
-            "n_samples_synthetic": len(synthetic_df),
-            "n_features": len(train_df.columns),
-        })
+        wandb.log(
+            {
+                "training_time_seconds": training_time,
+                "n_samples_train": n_samples,
+                "n_samples_synthetic": len(synthetic_df),
+                "n_features": len(train_df.columns),
+            }
+        )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

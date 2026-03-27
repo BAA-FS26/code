@@ -62,6 +62,7 @@ from src.utility.constants import (
     WANDB_ENTITY,
     WANDB_PROJECT,
 )
+from src.utility.utils import set_random_seeds
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -241,11 +242,13 @@ def build_model(classifier_name: str, params: dict):
     Raises:
         ValueError: If classifier_name is not recognised.
     """
+    current_seed = params.get("seed", RANDOM_STATE)
+
     if classifier_name == "logistic_regression":
         return LogisticRegression(
             C=params.get("C", 1.0),
             max_iter=1000,
-            random_state=RANDOM_STATE,
+            random_state=current_seed,
         )
 
     if classifier_name == "random_forest":
@@ -257,7 +260,7 @@ def build_model(classifier_name: str, params: dict):
             max_features=params.get("max_features", "sqrt"),
             min_samples_leaf=params.get("min_samples_leaf", 1),
             max_depth=max_depth,
-            random_state=RANDOM_STATE,
+            random_state=current_seed,
             n_jobs=-1,
         )
 
@@ -267,7 +270,7 @@ def build_model(classifier_name: str, params: dict):
             max_leaf_nodes=params.get("max_leaf_nodes", 31),
             min_samples_leaf=params.get("min_samples_leaf", 20),
             early_stopping=True,
-            random_state=RANDOM_STATE,
+            random_state=current_seed,
             categorical_features="from_dtype",
         )
 
@@ -336,6 +339,8 @@ def train_and_evaluate(
         name=run_name,
         config=params,
     ):
+        current_seed = params.get("seed", RANDOM_STATE)
+        set_random_seeds(current_seed)
         train_df, val_df = load_splits(data_source)
         X_train, y_train, X_val, y_val, preprocessor = prepare_splits(
             classifier_name, train_df, val_df
@@ -474,7 +479,7 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
                 param_str = "_".join(
                     f"{PARAM_ABBREVIATIONS.get(k, k)}={v}"
                     for k, v in params.items()
-                    if k != "classifier"
+                    if k not in ["classifier", "seed"]
                 )
                 run_name = f"{data_source}_{classifier_name}_sweep_{param_str}"
                 run.name = run_name
@@ -533,7 +538,7 @@ def main():
         train_and_evaluate(
             classifier_name=args.classifier,
             data_source=args.data_source,
-            params={},
+            params={"seed": RANDOM_STATE},
             run_name=f"{args.data_source}_{args.classifier}_default",
             save_model=False,
         )

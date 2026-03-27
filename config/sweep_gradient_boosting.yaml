@@ -13,3 +13,5 @@ parameters:
     values: [15, 31, 63, 127]
   min_samples_leaf:
     values: [10, 20, 50]
+  seed:
+    value: 42

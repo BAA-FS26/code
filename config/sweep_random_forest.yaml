@@ -13,3 +13,5 @@ parameters:
     values: [1, 5, 10, 20]
   max_depth:
     values: ["None", 5, 10, 20]
+  seed:
+    value: 42

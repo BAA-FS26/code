@@ -7,6 +7,7 @@ Usage:
     from src.utility.utils import load_metadata, set_random_seeds
 """
 
+import os
 import random
 from pathlib import Path
 
@@ -19,24 +20,29 @@ from src.utility.constants import RANDOM_STATE
 
 def set_random_seeds(seed: int = RANDOM_STATE) -> None:
     """
-    Seed all RNGs for reproducible training.
+    Seed all RNGs and configure backends for reproducible training.
 
-    Covers Python's random, NumPy, and PyTorch (CPU and GPU).
-    Should be called once before model initialisation in any script
-    that uses torch-based synthesizers (CTGAN, TVAE).
+    Covers Python's random, NumPy, PyTorch (CPU/GPU), and Python hash seeds.
+    Should be called once before model initialisation or data synthesis
+    (CTGAN, TVAE) to ensure consistent weights and sampling.
 
-    Note: full determinism on GPU also requires setting the environment
-    variable CUBLAS_WORKSPACE_CONFIG=:4096:8 and calling
-    torch.use_deterministic_algorithms(True), which may reduce performance.
+    Note: While this sets cuDNN to deterministic mode, bit-wise 100%
+    reproducibility on GPU may still require the environment variable
+    CUBLAS_WORKSPACE_CONFIG=:4096:8 and torch.use_deterministic_algorithms(True).
 
     Args:
         seed: Integer seed value. Defaults to RANDOM_STATE (42).
     """
     random.seed(seed)
     np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def load_metadata(models_dir: Path, synthesizer_name: str) -> dict:
