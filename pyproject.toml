@@ -14,7 +14,10 @@ dependencies = [
     "seaborn",
     "scikit-learn",
     "scipy",
-    "sdv"
+    "sdv",
+    "sdmetrics",
+    "anonymeter",
+    "pyarrow",
 ]
 
 [tool.setuptools.packages.find]

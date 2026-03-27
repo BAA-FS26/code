@@ -1,18 +1,22 @@
 """
 evaluate_fidelity.py
 
-Fidelity evaluation for synthetic data using SDMetrics.
+Fidelity evaluation for synthetic data using standalone SDMetrics.
+
+SDMetrics is model-agnostic and evaluates synthetic data independently
+of how it was generated. This ensures the evaluation pipeline is
+reproducible and applicable to any synthesizer, not just SDV models.
 
 Runs two reports for each synthesizer:
   - QualityReport: measures statistical similarity between synthetic and
     real data across two dimensions:
       * Column Shapes: univariate distribution similarity per feature
-      * Column Pair Trends: bivariate correlation similarity between features
-  - DiagnosticReport: checks data validity of synthetic data, including
+      * Column Pair Trends: bivariate correlation similarity
+  - DiagnosticReport: checks synthetic data validity, including
     out-of-range values and invalid categories
 
-All results are logged to W&B. Per-column scores are logged as W&B tables
-for detailed inspection.
+All results are logged to W&B. Per-column scores are logged as W&B
+tables for detailed inspection.
 
 Usage:
     python evaluate_fidelity.py --synthesizer gaussian_copula
@@ -25,10 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 import wandb
-from sdv.evaluation.single_table import (
-    evaluate_quality,
-    run_diagnostic,
-)
+from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
 from sdv.metadata import Metadata
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -63,15 +64,20 @@ def load_data(synthesizer_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return real_df, synthetic_df
 
 
-def load_metadata(synthesizer_name: str) -> Metadata:
+def load_metadata(synthesizer_name: str) -> dict:
     """
-    Load the saved SDV metadata for a given synthesizer.
+    Load the saved SDV metadata for a given synthesizer and return as
+    a single-table metadata dictionary compatible with SDMetrics.
+
+    The new SDV Metadata class uses a multi-table structure internally.
+    SDMetrics expects a single-table dict with 'columns' at the top level,
+    so the table-level dict is extracted from the full metadata.
 
     Args:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
 
     Returns:
-        Loaded Metadata object.
+        Single-table metadata dictionary with 'columns' at top level.
     """
     metadata_path = MODELS_DIR / f"{synthesizer_name}_metadata.json"
     if not metadata_path.exists():
@@ -79,19 +85,124 @@ def load_metadata(synthesizer_name: str) -> Metadata:
             f"No metadata found at {metadata_path}. "
             "Run synthesize.py first to generate and save the metadata."
         )
-    return Metadata.load_from_json(str(metadata_path))
+    full_dict = Metadata.load_from_json(str(metadata_path)).to_dict()
+    tables = full_dict.get("tables", {})
+    if not tables:
+        raise ValueError("Metadata contains no tables.")
+    table_name = next(iter(tables))
+    return tables[table_name]
 
 
-# ── Evaluation ────────────────────────────────────────────────────────────────
+# ── Quality report ────────────────────────────────────────────────────────────
+
+
+def run_quality_report(
+    real_df: pd.DataFrame,
+    synthetic_df: pd.DataFrame,
+    metadata: dict,
+) -> None:
+    """
+    Run SDMetrics QualityReport and log results to W&B.
+
+    Evaluates two dimensions:
+    - Column Shapes: univariate distribution similarity per feature
+    - Column Pair Trends: bivariate correlation similarity
+
+    Overall and per-dimension scores are logged as summary metrics.
+    Per-column scores are logged as W&B tables for detailed inspection.
+
+    Args:
+        real_df: Real training DataFrame.
+        synthetic_df: Synthetic DataFrame.
+        metadata: SDV metadata dictionary.
+    """
+    print("Running QualityReport...")
+    report = QualityReport()
+    report.generate(real_df, synthetic_df, metadata)
+
+    overall_score = report.get_score()
+    properties = report.get_properties()
+
+    column_shapes_score = properties.loc[
+        properties["Property"] == "Column Shapes", "Score"
+    ].values[0]
+
+    column_pair_trends_score = properties.loc[
+        properties["Property"] == "Column Pair Trends", "Score"
+    ].values[0]
+
+    print(f"  Overall Quality Score:    {overall_score:.4f}")
+    print(f"  Column Shapes Score:      {column_shapes_score:.4f}")
+    print(f"  Column Pair Trends Score: {column_pair_trends_score:.4f}")
+
+    wandb.log(
+        {
+            "quality_overall": overall_score,
+            "quality_column_shapes": column_shapes_score,
+            "quality_column_pair_trends": column_pair_trends_score,
+        }
+    )
+
+    for property_name in ["Column Shapes", "Column Pair Trends"]:
+        try:
+            details = report.get_details(property_name=property_name)
+            table_key = f"quality_{property_name.lower().replace(' ', '_')}_details"
+            wandb.log({table_key: wandb.Table(dataframe=details)})
+        except Exception as e:
+            print(f"  Could not log details for {property_name}: {e}")
+
+
+# ── Diagnostic report ─────────────────────────────────────────────────────────
+
+
+def run_diagnostic_report(
+    real_df: pd.DataFrame,
+    synthetic_df: pd.DataFrame,
+    metadata: dict,
+) -> None:
+    """
+    Run SDMetrics DiagnosticReport and log results to W&B.
+
+    Checks synthetic data validity including:
+    - Data Validity: boundary adherence, range coverage, category coverage
+    - Data Structure: whether synthetic data has the correct columns
+
+    Args:
+        real_df: Real training DataFrame.
+        synthetic_df: Synthetic DataFrame.
+        metadata: SDV metadata dictionary.
+    """
+    print("Running DiagnosticReport...")
+    report = DiagnosticReport()
+    report.generate(real_df, synthetic_df, metadata)
+
+    properties = report.get_properties()
+    metrics = {}
+
+    for _, row in properties.iterrows():
+        key = f"diagnostic_{row['Property'].lower().replace(' ', '_')}"
+        metrics[key] = row["Score"]
+        print(f"  {row['Property']}: {row['Score']:.4f}")
+
+    wandb.log(metrics)
+
+    try:
+        details = report.get_details(property_name="Data Validity")
+        wandb.log({"diagnostic_data_validity_details": wandb.Table(dataframe=details)})
+    except Exception as e:
+        print(f"  Could not log diagnostic details: {e}")
+
+
+# ── Main evaluation ───────────────────────────────────────────────────────────
 
 
 def evaluate_fidelity(synthesizer_name: str) -> None:
     """
-    Run fidelity evaluation for a synthesizer and log results to W&B.
+    Run full fidelity evaluation for a synthesizer and log to W&B.
 
-    Runs SDMetrics QualityReport and DiagnosticReport comparing synthetic
-    data against real training data. Logs overall scores, per-property
-    scores and per-column scores to W&B.
+    Runs both QualityReport and DiagnosticReport against the synthetic
+    data generated by the given synthesizer, comparing against real
+    training data.
 
     Args:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
@@ -107,72 +218,13 @@ def evaluate_fidelity(synthesizer_name: str) -> None:
         real_df, synthetic_df = load_data(synthesizer_name)
         metadata = load_metadata(synthesizer_name)
 
-        print(f"Running QualityReport for {synthesizer_name}...")
-        quality_report = evaluate_quality(
-            real_data=real_df,
-            synthetic_data=synthetic_df,
-            metadata=metadata,
-        )
+        print(f"Real training data: {len(real_df)} rows")
+        print(f"Synthetic data:     {len(synthetic_df)} rows")
 
-        print(f"Running DiagnosticReport for {synthesizer_name}...")
-        diagnostic_report = run_diagnostic(
-            real_data=real_df,
-            synthetic_data=synthetic_df,
-            metadata=metadata,
-        )
+        run_quality_report(real_df, synthetic_df, metadata)
+        run_diagnostic_report(real_df, synthetic_df, metadata)
 
-        # ── Quality scores ────────────────────────────────────────────────
-
-        overall_quality = quality_report.get_score()
-        properties = quality_report.get_properties()
-
-        column_shapes_score = properties.loc[
-            properties["Property"] == "Column Shapes", "Score"
-        ].values[0]
-
-        column_pair_trends_score = properties.loc[
-            properties["Property"] == "Column Pair Trends", "Score"
-        ].values[0]
-
-        wandb.log(
-            {
-                "quality_overall": overall_quality,
-                "quality_column_shapes": column_shapes_score,
-                "quality_column_pair_trends": column_pair_trends_score,
-            }
-        )
-
-        print(f"Overall Quality Score:       {overall_quality:.4f}")
-        print(f"Column Shapes Score:         {column_shapes_score:.4f}")
-        print(f"Column Pair Trends Score:    {column_pair_trends_score:.4f}")
-
-        # ── Per-column scores (Column Shapes) ─────────────────────────────
-
-        column_shapes_details = quality_report.get_details("Column Shapes")
-        wandb.log(
-            {"column_shapes_details": wandb.Table(dataframe=column_shapes_details)}
-        )
-
-        # ── Per-column pair scores (Column Pair Trends) ───────────────────
-
-        column_pair_details = quality_report.get_details("Column Pair Trends")
-        wandb.log(
-            {"column_pair_trends_details": wandb.Table(dataframe=column_pair_details)}
-        )
-
-        # ── Diagnostic scores ─────────────────────────────────────────────
-
-        diagnostic_properties = diagnostic_report.get_properties()
-
-        for _, row in diagnostic_properties.iterrows():
-            property_name = row["Property"].lower().replace(" ", "_")
-            wandb.log({f"diagnostic_{property_name}": row["Score"]})
-
-        print("\nDiagnostic Results:")
-        print(diagnostic_properties.to_string(index=False))
-
-        diagnostic_details = diagnostic_report.get_details("Data Validity")
-        wandb.log({"diagnostic_details": wandb.Table(dataframe=diagnostic_details)})
+        print("Fidelity evaluation complete.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -180,7 +232,7 @@ def evaluate_fidelity(synthesizer_name: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run fidelity evaluation for a synthesizer."
+        description="Evaluate fidelity of synthetic data using SDMetrics."
     )
     parser.add_argument(
         "--synthesizer",
