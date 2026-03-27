@@ -18,6 +18,7 @@ dependencies = [
     "sdmetrics",
     "anonymeter @ git+https://github.com/statice/anonymeter.git@v1.0.1",
     "pyarrow",
+    "wandb"
 ]
 
 [tool.setuptools.packages.find]
