@@ -25,23 +25,23 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
 
 import pandas as pd
 import wandb
 from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
-from sdv.metadata import Metadata
+
+from src.utility.constants import (
+    DATA_DIR,
+    SYNTHESIZER_MODELS_DIR,
+    SYNTHESIZERS,
+    WANDB_ENTITY,
+    WANDB_PROJECT,
+)
+from src.utility.utils import load_metadata
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR / "data"
-MODELS_DIR = BASE_DIR / "models" / "synthesizers"
-
-WANDB_PROJECT = "synthetic-data-eval"
-WANDB_ENTITY = "baa_fs26_pm"  # TODO: replace with your W&B entity
-
-SYNTHESIZERS = ["gaussian_copula", "ctgan", "tvae"]
+MODELS_DIR = SYNTHESIZER_MODELS_DIR
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -62,35 +62,6 @@ def load_data(synthesizer_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         DATA_DIR / "synthetic" / synthesizer_name / "default" / "synthetic_train.csv"
     )
     return real_df, synthetic_df
-
-
-def load_metadata(synthesizer_name: str) -> dict:
-    """
-    Load the saved SDV metadata for a given synthesizer and return as
-    a single-table metadata dictionary compatible with SDMetrics.
-
-    The new SDV Metadata class uses a multi-table structure internally.
-    SDMetrics expects a single-table dict with 'columns' at the top level,
-    so the table-level dict is extracted from the full metadata.
-
-    Args:
-        synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
-
-    Returns:
-        Single-table metadata dictionary with 'columns' at top level.
-    """
-    metadata_path = MODELS_DIR / f"{synthesizer_name}_metadata.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(
-            f"No metadata found at {metadata_path}. "
-            "Run synthesize.py first to generate and save the metadata."
-        )
-    full_dict = Metadata.load_from_json(str(metadata_path)).to_dict()
-    tables = full_dict.get("tables", {})
-    if not tables:
-        raise ValueError("Metadata contains no tables.")
-    table_name = next(iter(tables))
-    return tables[table_name]
 
 
 # ── Quality report ────────────────────────────────────────────────────────────
@@ -216,7 +187,7 @@ def evaluate_fidelity(synthesizer_name: str) -> None:
         config={"synthesizer": synthesizer_name, "evaluation": "fidelity"},
     ):
         real_df, synthetic_df = load_data(synthesizer_name)
-        metadata = load_metadata(synthesizer_name)
+        metadata = load_metadata(MODELS_DIR, synthesizer_name)
 
         print(f"Real training data: {len(real_df)} rows")
         print(f"Synthetic data:     {len(synthetic_df)} rows")

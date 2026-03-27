@@ -16,7 +16,7 @@ dependencies = [
     "scipy",
     "sdv",
     "sdmetrics",
-    "anonymeter",
+    "anonymeter @ git+https://github.com/statice/anonymeter.git@v1.0.1",
     "pyarrow",
 ]
 

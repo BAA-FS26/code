@@ -23,7 +23,6 @@ Usage:
 
 import argparse
 import time
-from pathlib import Path
 
 import pandas as pd
 import torch
@@ -35,17 +34,19 @@ from sdv.single_table import (
     TVAESynthesizer,
 )
 
+from src.utility.constants import (
+    DATA_DIR,
+    RANDOM_STATE,
+    SYNTHESIZER_MODELS_DIR,
+    SYNTHESIZERS,
+    WANDB_ENTITY,
+    WANDB_PROJECT,
+)
+from src.utility.utils import set_random_seeds
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = BASE_DIR / "data"
-MODELS_DIR = BASE_DIR / "models" / "synthesizers"
-
-WANDB_PROJECT = "synthetic-data-eval"
-WANDB_ENTITY = "baa_fs26_pm"  # TODO: replace with your W&B entity
-RANDOM_STATE = 42
-
-SYNTHESIZERS = ["gaussian_copula", "ctgan", "tvae"]
+MODELS_DIR = SYNTHESIZER_MODELS_DIR
 
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
@@ -66,31 +67,21 @@ def build_metadata(df: pd.DataFrame) -> Metadata:
     Returns:
         Validated Metadata object.
     """
-    metadata = Metadata.detect_from_dataframe(
-        data=df,
-        table_name="adult",
-    )
-
+    metadata = Metadata.detect_from_dataframe(data=df, table_name="adult")
     metadata.update_column(
         table_name="adult",
         column_name="income",
         sdtype="categorical",
     )
-
     metadata.validate()
     print("Metadata validated successfully.")
-
     return metadata
 
 
 # ── Model building ────────────────────────────────────────────────────────────
 
 
-def build_synthesizer(
-    synthesizer_name: str,
-    metadata: Metadata,
-    cuda: bool = False,
-):
+def build_synthesizer(synthesizer_name: str, metadata: Metadata, cuda: bool = False):
     """
     Build a synthesizer instance with default parameters.
 
@@ -102,28 +93,24 @@ def build_synthesizer(
 
     Returns:
         Unfitted SDV synthesizer instance.
+
+    Raises:
+        ValueError: If synthesizer_name is not recognised.
     """
     if synthesizer_name == "gaussian_copula":
-        return GaussianCopulaSynthesizer(
-            metadata=metadata,
-        )
+        return GaussianCopulaSynthesizer(metadata=metadata)
 
-    elif synthesizer_name == "ctgan":
-        return CTGANSynthesizer(
-            metadata=metadata,
-            enable_gpu=cuda,
-            verbose=True,
-        )
+    gpu_kwargs = {"enable_gpu": cuda, "verbose": True}
 
-    elif synthesizer_name == "tvae":
-        return TVAESynthesizer(
-            metadata=metadata,
-            enable_gpu=cuda,
-            verbose=True,
-        )
+    synthesizer_cls = {
+        "ctgan": CTGANSynthesizer,
+        "tvae": TVAESynthesizer,
+    }.get(synthesizer_name)
 
-    else:
+    if synthesizer_cls is None:
         raise ValueError(f"Unknown synthesizer: {synthesizer_name}")
+
+    return synthesizer_cls(metadata=metadata, **gpu_kwargs)
 
 
 # ── GPU info ──────────────────────────────────────────────────────────────────
@@ -137,7 +124,7 @@ def print_gpu_info(synthesizer_name: str, cuda: bool) -> None:
         synthesizer_name: Synthesizer being used.
         cuda: Whether GPU was requested via --cuda flag.
     """
-    if synthesizer_name not in ["ctgan", "tvae"]:
+    if synthesizer_name not in ("ctgan", "tvae"):
         print("GPU acceleration: not applicable for GaussianCopula")
         return
 
@@ -167,30 +154,23 @@ def log_loss_values(synthesizer_name: str, synthesizer) -> None:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
         synthesizer: Fitted SDV synthesizer instance.
     """
-    if synthesizer_name not in ["ctgan", "tvae"]:
+    if synthesizer_name not in ("ctgan", "tvae"):
         return
 
     loss_values = synthesizer.get_loss_values()
 
     if synthesizer_name == "ctgan":
         for _, row in loss_values.iterrows():
-            wandb.log(
-                {
-                    "epoch": int(row["Epoch"]),
-                    "loss_generator": row["Generator Loss"],
-                    "loss_discriminator": row["Discriminator Loss"],
-                }
-            )
+            wandb.log({
+                "epoch": int(row["Epoch"]),
+                "loss_generator": row["Generator Loss"],
+                "loss_discriminator": row["Discriminator Loss"],
+            })
 
     elif synthesizer_name == "tvae":
         epoch_loss = loss_values.groupby("Epoch")["Loss"].mean().reset_index()
         for _, row in epoch_loss.iterrows():
-            wandb.log(
-                {
-                    "epoch": int(row["Epoch"]),
-                    "loss": row["Loss"],
-                }
-            )
+            wandb.log({"epoch": int(row["Epoch"]), "loss": row["Loss"]})
 
 
 # ── Train and generate ────────────────────────────────────────────────────────
@@ -226,12 +206,12 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
             "gpu_in_use": cuda and torch.cuda.is_available(),
         },
     ):
-
         train_df = pd.read_csv(DATA_DIR / "processed" / "train.csv")
         n_samples = len(train_df)
         print(f"Loaded training data: {n_samples} rows")
 
         metadata = build_metadata(train_df)
+        set_random_seeds(RANDOM_STATE)
 
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         metadata_path = MODELS_DIR / f"{synthesizer_name}_metadata.json"
@@ -262,14 +242,12 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
         synthetic_df.to_csv(synthetic_path, index=False)
         print(f"Synthetic data saved to {synthetic_path.resolve()}")
 
-        wandb.log(
-            {
-                "training_time_seconds": training_time,
-                "n_samples_train": n_samples,
-                "n_samples_synthetic": len(synthetic_df),
-                "n_features": len(train_df.columns),
-            }
-        )
+        wandb.log({
+            "training_time_seconds": training_time,
+            "n_samples_train": n_samples,
+            "n_samples_synthetic": len(synthetic_df),
+            "n_features": len(train_df.columns),
+        })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -293,10 +271,7 @@ def main():
     )
 
     args = parser.parse_args()
-    train_and_generate(
-        synthesizer_name=args.synthesizer,
-        cuda=args.cuda,
-    )
+    train_and_generate(synthesizer_name=args.synthesizer, cuda=args.cuda)
 
 
 if __name__ == "__main__":

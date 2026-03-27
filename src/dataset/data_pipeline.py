@@ -8,14 +8,35 @@ Usage:
     from data_pipeline import clean_data, split_data, verify_stratification
 """
 
-from typing import Optional, Tuple, Union
 import json
-import pandas as pd
 from pathlib import Path
+from typing import Optional, Tuple, Union
+
+import pandas as pd
 from sklearn.model_selection import train_test_split
+
+from src.utility.constants import RANDOM_STATE
 
 
 TARGET_COL = "income"
+
+REQUIRED_COLS = {
+    "age",
+    "workclass",
+    "fnlwgt",
+    "education",
+    "education-num",
+    "marital-status",
+    "occupation",
+    "relationship",
+    "race",
+    "sex",
+    "capital-gain",
+    "capital-loss",
+    "hours-per-week",
+    "native-country",
+    "income",
+}
 
 
 def _save_education_map(df: pd.DataFrame, out_dir: Path) -> None:
@@ -80,28 +101,8 @@ def clean_data(
     if not isinstance(data, pd.DataFrame):
         raise TypeError(f"Expected pandas DataFrame, got {type(data).__name__}")
 
-    df = data.copy()
-
-    required_cols = {
-        "age",
-        "workclass",
-        "fnlwgt",
-        "education",
-        "education-num",
-        "marital-status",
-        "occupation",
-        "relationship",
-        "race",
-        "sex",
-        "capital-gain",
-        "capital-loss",
-        "hours-per-week",
-        "native-country",
-        "income",
-    }
-
-    if not required_cols.issubset(df.columns):
-        missing = required_cols - set(df.columns)
+    missing = REQUIRED_COLS - set(data.columns)
+    if missing:
         raise ValueError(
             f"Input DataFrame is missing required Adult Census columns: {missing}. "
             "Please ensure you are loading the correct dataset."
@@ -110,15 +111,20 @@ def clean_data(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    df.replace("?", pd.NA, inplace=True)
-    df["income"] = df["income"].str.strip().str.replace(".", "", regex=False)
+    df = (
+        data.copy()
+        .replace("?", pd.NA)
+        .assign(
+            income=lambda d: d["income"].str.strip().str.replace(".", "", regex=False)
+        )
+    )
 
     _save_education_map(df, out_dir)
+    df = df.drop(columns=["fnlwgt", "education"])
 
-    df.drop(columns=["fnlwgt", "education"], inplace=True)
-
-    df.to_csv(out_dir / "adult_cleaned.csv", index=False)
-    print(f"File saved successfully to: {(out_dir / 'adult_cleaned.csv').resolve()}")
+    out_path = out_dir / "adult_cleaned.csv"
+    df.to_csv(out_path, index=False)
+    print(f"File saved successfully to: {out_path.resolve()}")
 
     return df
 
@@ -127,7 +133,7 @@ def split_data(
     df: pd.DataFrame,
     target_col: str = TARGET_COL,
     output_dir: Union[str, Path] = Path("../data/processed"),
-    random_state: Optional[int] = 42,
+    random_state: Optional[int] = RANDOM_STATE,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Split the cleaned dataset into stratified train, validation and test sets.
@@ -166,7 +172,6 @@ def split_data(
         stratify=df[target_col],
         random_state=random_state,
     )
-
     train_df, val_df = train_test_split(
         train_val,
         test_size=0.25,
@@ -174,14 +179,12 @@ def split_data(
         random_state=random_state,
     )
 
-    datasets = {
-        "train.csv": train_df,
-        "validation.csv": val_df,
-        "test.csv": test_df,
-    }
-
-    for filename, data in datasets.items():
-        data.to_csv(out_path / filename, index=False)
+    for filename, split in [
+        ("train.csv", train_df),
+        ("validation.csv", val_df),
+        ("test.csv", test_df),
+    ]:
+        split.to_csv(out_path / filename, index=False)
 
     return train_df, val_df, test_df
 

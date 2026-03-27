@@ -13,14 +13,14 @@ Usage:
     from feature_engineering import (
         build_preprocessor_logistic_regression,
         build_preprocessor_random_forest,
-        prepare_data_logistic_regression,
-        prepare_data_random_forest,
+        prepare_data,
         prepare_data_gradient_boosting,
         encode_target,
     )
 """
 
 from typing import Tuple
+
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -79,9 +79,7 @@ def drop_target(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=[TARGET_COL])
 
 
-def build_preprocessor_logistic_regression(
-    train: pd.DataFrame,
-) -> ColumnTransformer:
+def build_preprocessor_logistic_regression(train: pd.DataFrame) -> ColumnTransformer:
     """
     Build and fit a preprocessor for Logistic Regression on the training set.
 
@@ -118,10 +116,7 @@ def build_preprocessor_logistic_regression(
                         ("imputer", SimpleImputer(strategy="most_frequent")),
                         (
                             "encoder",
-                            OneHotEncoder(
-                                handle_unknown="ignore",
-                                sparse_output=False,
-                            ),
+                            OneHotEncoder(handle_unknown="ignore", sparse_output=False),
                         ),
                     ]
                 ),
@@ -134,9 +129,7 @@ def build_preprocessor_logistic_regression(
     return preprocessor
 
 
-def build_preprocessor_random_forest(
-    train: pd.DataFrame,
-) -> ColumnTransformer:
+def build_preprocessor_random_forest(train: pd.DataFrame) -> ColumnTransformer:
     """
     Build and fit a preprocessor for Random Forest on the training set.
 
@@ -180,36 +173,20 @@ def build_preprocessor_random_forest(
     return preprocessor
 
 
-def prepare_data_logistic_regression(
+def prepare_data(
     preprocessor: ColumnTransformer,
     df: pd.DataFrame,
 ) -> Tuple[np.ndarray, pd.Series]:
     """
-    Transform a dataset for Logistic Regression using a fitted preprocessor.
+    Transform a dataset using a fitted preprocessor.
+
+    Used for both Logistic Regression and Random Forest — the preprocessing
+    steps differ (handled by the preprocessor itself) but the transform
+    call is identical.
 
     Args:
-        preprocessor: Fitted ColumnTransformer as returned by
-                      build_preprocessor_logistic_regression().
-        df: DataFrame including the target column to transform.
-
-    Returns:
-        Tuple of (X, y) where X is the transformed feature matrix and y
-        is the encoded target Series.
-    """
-    y = encode_target(df)
-    X = np.asarray(preprocessor.transform(drop_target(df)))
-    return X, y
-
-
-def prepare_data_random_forest(
-    preprocessor: ColumnTransformer,
-    df: pd.DataFrame,
-) -> Tuple[np.ndarray, pd.Series]:
-    """
-    Transform a dataset for Random Forest using a fitted preprocessor.
-
-    Args:
-        preprocessor: Fitted ColumnTransformer as returned by
+        preprocessor: Fitted ColumnTransformer, as returned by
+                      build_preprocessor_logistic_regression() or
                       build_preprocessor_random_forest().
         df: DataFrame including the target column to transform.
 
@@ -222,9 +199,7 @@ def prepare_data_random_forest(
     return X, y
 
 
-def prepare_data_gradient_boosting(
-    df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.Series]:
+def prepare_data_gradient_boosting(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Prepare a dataset for HistGradientBoostingClassifier.
 

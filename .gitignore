@@ -212,5 +212,8 @@ data/cleaned
 data/processed
 data/synthetic
 
+scripts
+
+# Outputs
 wandb
 models
