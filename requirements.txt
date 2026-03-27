@@ -1,8 +1,0 @@
-# Add needed packages for project
-ucimlrepo
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-scipy
