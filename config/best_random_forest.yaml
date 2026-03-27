@@ -1,3 +1,4 @@
 max_depth: 20
 max_features: log2
 min_samples_leaf: 1
+seed: 42
