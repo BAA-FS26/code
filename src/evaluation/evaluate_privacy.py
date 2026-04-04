@@ -48,8 +48,8 @@ from src.utility.utils import load_metadata
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
-N_ATTACKS = 2000
-SENSITIVE_COLS = ["income", "race", "sex"]
+N_ATTACKS = 5000
+SENSITIVE_COLS = ["income", "race", "sex", "age"]
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -95,11 +95,14 @@ def run_singling_out(
     synthetic_df: pd.DataFrame,
 ) -> None:
     """
-    Run Anonymeter SinglingOutEvaluator and log results to W&B.
+    Run Anonymeter SinglingOutEvaluator in both univariate and multivariate
+    mode and log results to W&B.
 
-    Measures whether an attacker can use the synthetic data to uniquely
-    identify a real person in the training set. A risk value near 0
-    indicates good privacy protection.
+    Univariate mode tests single-attribute identification. Multivariate
+    mode tests combined-attribute identification — a stronger and more
+    realistic attack. Both are reported for completeness.
+
+    A risk value near 0 indicates good privacy protection.
 
     Args:
         train_df: Real training DataFrame (ori in Anonymeter terms).
@@ -107,27 +110,29 @@ def run_singling_out(
         synthetic_df: Synthetic DataFrame.
     """
     print(f"Running SinglingOutEvaluator (n_attacks={N_ATTACKS})...")
-    evaluator = SinglingOutEvaluator(
-        ori=train_df,
-        syn=synthetic_df,
-        control=holdout_df,
-        n_attacks=N_ATTACKS,
-    )
-    evaluator.evaluate(mode="univariate")
-    risk = evaluator.risk()
 
-    print(
-        f"  Singling Out Risk: {risk.value:.4f} "
-        f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
-    )
+    for mode in ["univariate", "multivariate"]:
+        evaluator = SinglingOutEvaluator(
+            ori=train_df,
+            syn=synthetic_df,
+            control=holdout_df,
+            n_attacks=N_ATTACKS,
+        )
+        evaluator.evaluate(mode=mode)
+        risk = evaluator.risk()
 
-    wandb.log(
-        {
-            "singling_out_risk": risk.value,
-            "singling_out_risk_ci_lower": risk.ci[0],
-            "singling_out_risk_ci_upper": risk.ci[1],
-        }
-    )
+        print(
+            f"  Singling Out Risk ({mode}): {risk.value:.4f} "
+            f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
+        )
+
+        wandb.log(
+            {
+                f"singling_out_risk_{mode}": risk.value,
+                f"singling_out_risk_{mode}_ci_lower": risk.ci[0],
+                f"singling_out_risk_{mode}_ci_upper": risk.ci[1],
+            }
+        )
 
 
 def run_linkability(
