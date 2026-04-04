@@ -68,7 +68,7 @@ from src.utility.utils import set_random_seeds
 
 CONFIG_DIR = BASE_DIR / "config"
 
-N_ESTIMATORS_RF = 300  # Fixed, not tuned (more trees is always better for RF)
+N_ESTIMATORS_RF = 300 
 
 CLASSIFIERS = ["logistic_regression", "random_forest", "gradient_boosting"]
 DATA_SOURCES = ["real"] + SYNTHESIZERS
