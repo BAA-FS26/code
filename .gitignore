@@ -213,10 +213,11 @@ data/processed
 data/synthetic
 data/results
 
-scripts
-
 # Outputs
 wandb
 models
-notebooks/visualization.ipynb
 figures
+
+scripts
+notebooks/visualization.ipynb
+

@@ -68,7 +68,7 @@ from src.utility.utils import set_random_seeds
 
 CONFIG_DIR = BASE_DIR / "config"
 
-N_ESTIMATORS_RF = 300 
+N_ESTIMATORS_RF = 300
 
 CLASSIFIERS = ["logistic_regression", "random_forest", "gradient_boosting"]
 DATA_SOURCES = ["real"] + SYNTHESIZERS
@@ -280,25 +280,28 @@ def build_model(classifier_name: str, params: dict):
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 
-def compute_metrics(y_true, y_pred, y_proba, prefix: str) -> dict:
+def compute_metrics(y_true, y_pred, prefix: str) -> dict:
     """
-    Compute classification metrics for the positive class (>50K, label=1).
+    Compute macro-averaged classification metrics across all classes.
 
     Args:
-        y_true: True binary labels.
-        y_pred: Predicted binary labels.
-        y_proba: Predicted probabilities for the positive class.
-        prefix: Metric name prefix, e.g. 'train', 'val' or 'test'.
+        y_true (array-like): Ground truth binary or multiclass labels.
+        y_pred (array-like): Predicted labels as returned by a classifier.
+        prefix (str): Prefix to prepend to metric keys (e.g., 'train', 'val').
 
     Returns:
-        Dictionary of metrics ready for wandb.log().
+        dict: A dictionary of accuracy and macro-averaged precision, recall,
+            and F1-score, formatted for logging (e.g., to wandb).
     """
     return {
         f"{prefix}_accuracy": accuracy_score(y_true, y_pred),
-        f"{prefix}_precision": precision_score(y_true, y_pred, zero_division=0),
-        f"{prefix}_recall": recall_score(y_true, y_pred, zero_division=0),
-        f"{prefix}_f1": f1_score(y_true, y_pred, zero_division=0),
-        f"{prefix}_auc_roc": roc_auc_score(y_true, y_proba),
+        f"{prefix}_precision_macro": precision_score(
+            y_true, y_pred, zero_division=0, average="macro"
+        ),
+        f"{prefix}_recall_macro": recall_score(
+            y_true, y_pred, zero_division=0, average="macro"
+        ),
+        f"{prefix}_f1_macro": f1_score(y_true, y_pred, zero_division=0, average="macro"),
     }
 
 
@@ -351,13 +354,11 @@ def train_and_evaluate(
 
         # Train metrics
         y_train_pred = model.predict(X_train)
-        y_train_proba = model.predict_proba(X_train)[:, 1]
-        wandb.log(compute_metrics(y_train, y_train_pred, y_train_proba, prefix="train"))
+        wandb.log(compute_metrics(y_train, y_train_pred, prefix="train"))
 
         # Val metrics
         y_val_pred = model.predict(X_val)
-        y_val_proba = model.predict_proba(X_val)[:, 1]
-        wandb.log(compute_metrics(y_val, y_val_pred, y_val_proba, prefix="val"))
+        wandb.log(compute_metrics(y_val, y_val_pred, prefix="val"))
 
         if save_model:
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -405,8 +406,7 @@ def evaluate_on_test(classifier_name: str, data_source: str) -> None:
     run_name = f"{data_source}_{classifier_name}_test"
     with wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY, name=run_name):
         y_test_pred = model.predict(X_test)
-        y_test_proba = model.predict_proba(X_test)[:, 1]
-        wandb.log(compute_metrics(y_test, y_test_pred, y_test_proba, prefix="test"))
+        wandb.log(compute_metrics(y_test, y_test_pred, prefix="test"))
 
 
 # ── Fetch best params ─────────────────────────────────────────────────────────
@@ -417,7 +417,7 @@ def fetch_best_params(classifier_name: str, data_source: str) -> None:
     Fetch the best hyperparameters from the latest W&B sweep and save
     them to config/best_{classifier_name}.yaml.
 
-    Queries W&B for the run with the highest val_f1 among all sweep
+    Queries W&B for the run with the highest val_f1_macro among all sweep
     runs for the given classifier and data source, then saves the
     parameters to disk for use with --mode best.
 
@@ -432,7 +432,7 @@ def fetch_best_params(classifier_name: str, data_source: str) -> None:
         filters={"display_name": {"$regex": f"^{data_source}_{classifier_name}_sweep"}},
     )
 
-    best_run = max(runs, key=lambda r: r.summary.get("val_f1", 0))
+    best_run = max(runs, key=lambda r: r.summary.get("val_f1_macro", 0))
     best_params = {
         k: v
         for k, v in best_run.config.items()
@@ -445,7 +445,7 @@ def fetch_best_params(classifier_name: str, data_source: str) -> None:
         yaml.dump(best_params, f)
 
     print(f"Best params saved to {output_path.resolve()}")
-    print(f"Best val_f1: {best_run.summary.get('val_f1'):.4f}")
+    print(f"Best val_f1_macro: {best_run.summary.get('val_f1_macro'):.4f}")
     print(f"Params: {best_params}")
 
 
@@ -457,7 +457,7 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
     Initialise and run a W&B hyperparameter sweep for a classifier.
 
     Loads sweep configuration from config/sweep_{classifier_name}.yaml.
-    The sweep optimises val_f1 and never touches the test set.
+    The sweep optimises val_f1_macro and never touches the test set.
     Each run is named with abbreviated hyperparameter values for
     readability in the W&B UI.
 

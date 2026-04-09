@@ -1,7 +1,7 @@
 program: classify.py
 method: random
 metric:
-  name: val_f1
+  name: val_f1_macro
   goal: maximize
 run_cap: 20
 parameters:

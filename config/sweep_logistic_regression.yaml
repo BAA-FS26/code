@@ -1,7 +1,7 @@
 program: classify.py
 method: grid
 metric:
-  name: val_f1
+  name: val_f1_macro
   goal: maximize
 parameters:
   classifier:
