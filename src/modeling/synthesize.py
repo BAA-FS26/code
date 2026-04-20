@@ -11,14 +11,17 @@ Supported synthesizers:
   - tvae
 
 Usage:
-    # CPU (default)
+    # Without W&B (default)
     python synthesize.py --synthesizer gaussian_copula
     python synthesize.py --synthesizer ctgan
     python synthesize.py --synthesizer tvae
 
-    # GPU
+    # With W&B logging
+    python synthesize.py --synthesizer ctgan --wandb
+
+    # With GPU acceleration (CTGAN and TVAE only)
     python synthesize.py --synthesizer ctgan --cuda
-    python synthesize.py --synthesizer tvae --cuda
+    python synthesize.py --synthesizer ctgan --cuda --wandb
 """
 
 import argparse
@@ -26,7 +29,6 @@ import time
 
 import pandas as pd
 import torch
-import wandb
 from sdv.metadata import Metadata
 from sdv.single_table import (
     CTGANSynthesizer,
@@ -39,9 +41,8 @@ from src.utility.constants import (
     RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
-    WANDB_ENTITY,
-    WANDB_PROJECT,
 )
+from src.utility.logger import RunLogger
 from src.utility.utils import set_random_seeds
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -100,8 +101,6 @@ def build_synthesizer(synthesizer_name: str, metadata: Metadata, cuda: bool = Fa
     if synthesizer_name == "gaussian_copula":
         return GaussianCopulaSynthesizer(metadata=metadata)
 
-    gpu_kwargs = {"enable_gpu": cuda, "verbose": True}
-
     synthesizer_cls = {
         "ctgan": CTGANSynthesizer,
         "tvae": TVAESynthesizer,
@@ -110,7 +109,7 @@ def build_synthesizer(synthesizer_name: str, metadata: Metadata, cuda: bool = Fa
     if synthesizer_cls is None:
         raise ValueError(f"Unknown synthesizer: {synthesizer_name}")
 
-    return synthesizer_cls(metadata=metadata, **gpu_kwargs)
+    return synthesizer_cls(metadata=metadata, enable_gpu=cuda, verbose=True)
 
 
 # ── GPU info ──────────────────────────────────────────────────────────────────
@@ -142,9 +141,9 @@ def print_gpu_info(synthesizer_name: str, cuda: bool) -> None:
 # ── Loss logging ──────────────────────────────────────────────────────────────
 
 
-def log_loss_values(synthesizer_name: str, synthesizer) -> None:
+def log_loss_values(synthesizer_name: str, synthesizer, logger: RunLogger) -> None:
     """
-    Log loss values to W&B for CTGAN and TVAE.
+    Log per-epoch loss values via the run logger.
 
     CTGAN logs generator and discriminator loss per epoch.
     TVAE logs a single ELBO loss per epoch, averaged across batches.
@@ -153,6 +152,7 @@ def log_loss_values(synthesizer_name: str, synthesizer) -> None:
     Args:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
         synthesizer: Fitted SDV synthesizer instance.
+        logger: Active RunLogger instance.
     """
     if synthesizer_name not in ("ctgan", "tvae"):
         return
@@ -161,7 +161,7 @@ def log_loss_values(synthesizer_name: str, synthesizer) -> None:
 
     if synthesizer_name == "ctgan":
         for _, row in loss_values.iterrows():
-            wandb.log(
+            logger.log(
                 {
                     "epoch": int(row["Epoch"]),
                     "loss_generator": row["Generator Loss"],
@@ -172,20 +172,25 @@ def log_loss_values(synthesizer_name: str, synthesizer) -> None:
     elif synthesizer_name == "tvae":
         epoch_loss = loss_values.groupby("Epoch")["Loss"].mean().reset_index()
         for _, row in epoch_loss.iterrows():
-            wandb.log({"epoch": int(row["Epoch"]), "loss": row["Loss"]})
+            logger.log({"epoch": int(row["Epoch"]), "loss": row["Loss"]})
 
 
 # ── Train and generate ────────────────────────────────────────────────────────
 
 
-def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
+def train_and_generate(
+    synthesizer_name: str,
+    cuda: bool = False,
+    use_wandb: bool = False,
+) -> None:
     """
     Train a synthesizer on real training data and generate synthetic data.
 
     Loads the real training split, fits the synthesizer, generates a
     synthetic dataset of equal size, and saves both the fitted synthesizer
-    and the synthetic data to disk. Training time, loss curves and run
-    metadata are logged to W&B.
+    and the synthetic data to disk. Training time and run metadata are
+    always saved locally. Loss curves and metrics are also logged to W&B
+    if enabled.
 
     The synthesizer is trained on the training split only. Validation and
     test splits are never used during synthesis.
@@ -194,20 +199,18 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
         cuda: Whether to use GPU acceleration for CTGAN and TVAE.
               Has no effect on GaussianCopula. Defaults to False.
+        use_wandb: Whether to log results to W&B. Defaults to False.
     """
     run_name = f"synthesizer_{synthesizer_name}_default"
 
-    with wandb.init(
-        project=WANDB_PROJECT,
-        entity=WANDB_ENTITY,
-        name=run_name,
-        config={
-            "synthesizer": synthesizer_name,
-            "mode": "default",
-            "cuda": cuda,
-            "gpu_in_use": cuda and torch.cuda.is_available(),
-        },
-    ):
+    config = {
+        "synthesizer": synthesizer_name,
+        "mode": "default",
+        "cuda": cuda,
+        "gpu_in_use": cuda and torch.cuda.is_available(),
+    }
+
+    with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         train_df = pd.read_csv(DATA_DIR / "processed" / "train.csv")
         n_samples = len(train_df)
         print(f"Loaded training data: {n_samples} rows")
@@ -217,8 +220,13 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
 
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         metadata_path = MODELS_DIR / f"{synthesizer_name}_metadata.json"
-        metadata.save_to_json(str(metadata_path))
-        print(f"Metadata saved to {metadata_path.resolve()}")
+        if metadata_path.exists():
+            print(
+                f"Metadata already exists at {metadata_path.resolve()}, skipping save."
+            )
+        else:
+            metadata.save_to_json(str(metadata_path))
+            print(f"Metadata saved to {metadata_path.resolve()}")
 
         synthesizer = build_synthesizer(synthesizer_name, metadata, cuda=cuda)
         print_gpu_info(synthesizer_name, cuda)
@@ -229,7 +237,7 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
         training_time = time.time() - start_time
         print(f"Training complete in {training_time:.1f}s")
 
-        log_loss_values(synthesizer_name, synthesizer)
+        log_loss_values(synthesizer_name, synthesizer, logger)
 
         print(f"Generating {n_samples} synthetic samples...")
         synthetic_df = synthesizer.sample(num_rows=n_samples)
@@ -244,7 +252,7 @@ def train_and_generate(synthesizer_name: str, cuda: bool = False) -> None:
         synthetic_df.to_csv(synthetic_path, index=False)
         print(f"Synthetic data saved to {synthetic_path.resolve()}")
 
-        wandb.log(
+        logger.log(
             {
                 "training_time_seconds": training_time,
                 "n_samples_train": n_samples,
@@ -273,9 +281,19 @@ def main():
         default=False,
         help="Use GPU acceleration for CTGAN and TVAE. Defaults to False.",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        default=False,
+        help="Log results to Weights & Biases. Requires WANDB_ENTITY to be set.",
+    )
 
     args = parser.parse_args()
-    train_and_generate(synthesizer_name=args.synthesizer, cuda=args.cuda)
+    train_and_generate(
+        synthesizer_name=args.synthesizer,
+        cuda=args.cuda,
+        use_wandb=args.wandb,
+    )
 
 
 if __name__ == "__main__":

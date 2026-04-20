@@ -12,7 +12,7 @@ Runs four evaluations for each synthesizer:
   - DCR Metrics: distance-based privacy metrics measuring whether synthetic
     data is memorizing training records (SDMetrics)
 
-All results are logged to W&B.
+Results are always saved locally as JSON. W&B logging is optional.
 
 The val set is used as the Anonymeter control dataset — it consists of
 real records that were not used to train the synthesizer, making it
@@ -20,15 +20,18 @@ suitable for separating general population patterns from training-specific
 privacy leakage.
 
 Usage:
+    # Without W&B (default)
     python evaluate_privacy.py --synthesizer gaussian_copula
     python evaluate_privacy.py --synthesizer ctgan
     python evaluate_privacy.py --synthesizer tvae
+
+    # With W&B logging
+    python evaluate_privacy.py --synthesizer ctgan --wandb
 """
 
 import argparse
 
 import pandas as pd
-import wandb
 from anonymeter.evaluators import (
     InferenceEvaluator,
     LinkabilityEvaluator,
@@ -38,19 +41,19 @@ from sdmetrics.single_table import DCRBaselineProtection, DCROverfittingProtecti
 
 from src.utility.constants import (
     DATA_DIR,
+    RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
-    WANDB_ENTITY,
-    WANDB_PROJECT,
 )
-from src.utility.utils import load_metadata
+from src.utility.logger import RunLogger
+from src.utility.utils import load_metadata, set_random_seeds
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
 N_ATTACKS = 2000
 
-# based on EDA findings
+# Based on EDA findings — inter-feature associations and data protection relevance
 SENSITIVE_COLS = ["income", "occupation", "sex"]
 
 
@@ -95,10 +98,11 @@ def run_singling_out(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
+    logger: RunLogger,
 ) -> None:
     """
     Run Anonymeter SinglingOutEvaluator in both univariate and multivariate
-    mode and log results to W&B.
+    mode and log results via the run logger.
 
     Univariate mode tests single-attribute identification. Multivariate
     mode tests combined-attribute identification — a stronger and more
@@ -110,6 +114,7 @@ def run_singling_out(
         train_df: Real training DataFrame (ori in Anonymeter terms).
         holdout_df: Combined val and test DataFrame used as control.
         synthetic_df: Synthetic DataFrame.
+        logger: Active RunLogger instance.
     """
     print(f"Running SinglingOutEvaluator (n_attacks={N_ATTACKS})...")
 
@@ -128,7 +133,7 @@ def run_singling_out(
             f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
         )
 
-        wandb.log(
+        logger.log(
             {
                 f"singling_out_risk_{mode}": risk.value,
                 f"singling_out_risk_{mode}_ci_lower": risk.ci[0],
@@ -141,9 +146,10 @@ def run_linkability(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
+    logger: RunLogger,
 ) -> None:
     """
-    Run Anonymeter LinkabilityEvaluator and log results to W&B.
+    Run Anonymeter LinkabilityEvaluator and log results via the run logger.
 
     Measures whether an attacker can link two records from different
     datasets to the same person using the synthetic data. The columns
@@ -155,6 +161,7 @@ def run_linkability(
         train_df: Real training DataFrame (ori in Anonymeter terms).
         holdout_df: Combined val and test DataFrame used as control.
         synthetic_df: Synthetic DataFrame.
+        logger: Active RunLogger instance.
     """
     print(f"Running LinkabilityEvaluator (n_attacks={N_ATTACKS})...")
 
@@ -173,10 +180,11 @@ def run_linkability(
     risk = evaluator.risk()
 
     print(
-        f"  Linkability Risk: {risk.value:.4f} " f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
+        f"  Linkability Risk: {risk.value:.4f} "
+        f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
     )
 
-    wandb.log(
+    logger.log(
         {
             "linkability_risk": risk.value,
             "linkability_risk_ci_lower": risk.ci[0],
@@ -189,10 +197,11 @@ def run_inference(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
+    logger: RunLogger,
 ) -> None:
     """
     Run Anonymeter InferenceEvaluator for each sensitive column and log
-    results to W&B.
+    results via the run logger.
 
     Models an attacker who possesses all available attributes except the
     target attribute as auxiliary information, following the methodology
@@ -206,6 +215,7 @@ def run_inference(
         train_df: Real training DataFrame (ori in Anonymeter terms).
         holdout_df: Combined val and test DataFrame used as control.
         synthetic_df: Synthetic DataFrame.
+        logger: Active RunLogger instance.
     """
     print(f"Running InferenceEvaluator (n_attacks={N_ATTACKS})...")
 
@@ -227,7 +237,7 @@ def run_inference(
             f"[{risk.ci[0]:.4f}, {risk.ci[1]:.4f}]"
         )
 
-        wandb.log(
+        logger.log(
             {
                 f"inference_risk_{secret}": risk.value,
                 f"inference_risk_{secret}_ci_lower": risk.ci[0],
@@ -244,9 +254,10 @@ def run_dcr_metrics(
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
     metadata: dict,
+    logger: RunLogger,
 ) -> None:
     """
-    Run SDMetrics DCR-based privacy metrics and log results to W&B.
+    Run SDMetrics DCR-based privacy metrics and log results via the run logger.
 
     Computes two metrics:
     - DCRBaselineProtection: compares distances from synthetic to real
@@ -264,6 +275,7 @@ def run_dcr_metrics(
         holdout_df: Combined val and test DataFrame used as holdout.
         synthetic_df: Synthetic DataFrame.
         metadata: SDV metadata dictionary.
+        logger: Active RunLogger instance.
     """
     print("Running DCR metrics...")
 
@@ -273,7 +285,6 @@ def run_dcr_metrics(
         metadata=metadata,
         num_rows_subsample=5000,
     )
-
     dcr_overfitting = DCROverfittingProtection.compute(
         real_training_data=train_df,
         synthetic_data=synthetic_df,
@@ -285,7 +296,7 @@ def run_dcr_metrics(
     print(f"  DCR Baseline Protection:    {dcr_baseline:.4f}")
     print(f"  DCR Overfitting Protection: {dcr_overfitting:.4f}")
 
-    wandb.log(
+    logger.log(
         {
             "dcr_baseline_protection": dcr_baseline,
             "dcr_overfitting_protection": dcr_overfitting,
@@ -296,40 +307,39 @@ def run_dcr_metrics(
 # ── Main evaluation ───────────────────────────────────────────────────────────
 
 
-def evaluate_privacy(synthesizer_name: str) -> None:
+def evaluate_privacy(synthesizer_name: str, use_wandb: bool = False) -> None:
     """
-    Run full privacy evaluation for a synthesizer and log to W&B.
+    Run full privacy evaluation for a synthesizer.
 
     Runs Singling Out, Linkability, Inference and DCR evaluations
     against the synthetic data generated by the given synthesizer.
+    Results are always saved locally. W&B logging is optional.
 
     Args:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
+        use_wandb: Whether to log results to W&B. Defaults to False.
     """
     run_name = f"eval_privacy_{synthesizer_name}_default"
+    config = {
+        "synthesizer": synthesizer_name,
+        "evaluation": "privacy",
+        "n_attacks": N_ATTACKS,
+        "sensitive_cols": SENSITIVE_COLS,
+    }
 
-    with wandb.init(
-        project=WANDB_PROJECT,
-        entity=WANDB_ENTITY,
-        name=run_name,
-        config={
-            "synthesizer": synthesizer_name,
-            "evaluation": "privacy",
-            "n_attacks": N_ATTACKS,
-            "sensitive_cols": SENSITIVE_COLS,
-        },
-    ):
+    with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         train_df, holdout_df, synthetic_df = load_data(synthesizer_name)
-        metadata_dict = load_metadata(MODELS_DIR, synthesizer_name)
+        metadata = load_metadata(MODELS_DIR, synthesizer_name)
 
         print(f"Real training data:  {len(train_df)} rows")
         print(f"Holdout data:        {len(holdout_df)} rows")
         print(f"Synthetic data:      {len(synthetic_df)} rows")
 
-        run_singling_out(train_df, holdout_df, synthetic_df)
-        run_linkability(train_df, holdout_df, synthetic_df)
-        run_inference(train_df, holdout_df, synthetic_df)
-        run_dcr_metrics(train_df, holdout_df, synthetic_df, metadata_dict)
+        set_random_seeds(RANDOM_STATE)
+        run_singling_out(train_df, holdout_df, synthetic_df, logger)
+        run_linkability(train_df, holdout_df, synthetic_df, logger)
+        run_inference(train_df, holdout_df, synthetic_df, logger)
+        run_dcr_metrics(train_df, holdout_df, synthetic_df, metadata, logger)
 
         print("Privacy evaluation complete.")
 
@@ -347,9 +357,15 @@ def main():
         required=True,
         help="Synthesizer to evaluate.",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        default=False,
+        help="Log results to Weights & Biases. Requires WANDB_ENTITY to be set.",
+    )
 
     args = parser.parse_args()
-    evaluate_privacy(synthesizer_name=args.synthesizer)
+    evaluate_privacy(synthesizer_name=args.synthesizer, use_wandb=args.wandb)
 
 
 if __name__ == "__main__":

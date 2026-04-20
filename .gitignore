@@ -211,12 +211,12 @@ data/raw
 data/cleaned
 data/processed
 data/synthetic
-data/results
 
 # Outputs
 wandb
 models
 figures
+results
 
 scripts
 notebooks/visualization.ipynb
