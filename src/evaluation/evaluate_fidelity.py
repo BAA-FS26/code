@@ -1,12 +1,12 @@
 """
 evaluate_fidelity.py
- 
+
 Fidelity evaluation for synthetic data using standalone SDMetrics.
- 
+
 SDMetrics is model-agnostic and evaluates synthetic data independently
 of how it was generated. This ensures the evaluation pipeline is
 reproducible and applicable to any synthesizer, not just SDV models.
- 
+
 Runs two reports for each synthesizer:
   - QualityReport: measures statistical similarity between synthetic and
     real data across two dimensions:
@@ -14,18 +14,22 @@ Runs two reports for each synthesizer:
       * Column Pair Trends: bivariate correlation similarity
   - DiagnosticReport: checks synthetic data validity, including
     out-of-range values and invalid categories
- 
+
 Results are always saved locally as JSON. W&B logging is optional.
 Per-column scores are logged as W&B tables when W&B is enabled.
- 
+
 Usage:
     # Without W&B (default)
     python -m src.evaluation.evaluate_fidelity --synthesizer gaussian_copula
     python -m src.evaluation.evaluate_fidelity --synthesizer ctgan
     python -m src.evaluation.evaluate_fidelity --synthesizer tvae
- 
+
     # With W&B logging
     python -m src.evaluation.evaluate_fidelity --synthesizer ctgan --wandb
+
+    # DP synthesizers
+    python -m src.evaluation.evaluate_fidelity --synthesizer dpctgan/eps_1.0
+    python -m src.evaluation.evaluate_fidelity --synthesizer patectgan/eps_1.0
 """
 
 import argparse
@@ -35,11 +39,13 @@ from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
 
 from src.utility.constants import (
     DATA_DIR,
+    DP_EPSILONS,
+    DP_SYNTHESIZERS,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
 )
 from src.utility.logger import RunLogger
-from src.utility.utils import load_metadata
+from src.utility.utils import build_sdmetrics_metadata, load_metadata
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -53,16 +59,26 @@ def load_data(synthesizer_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load real training data and synthetic data for a given synthesizer.
 
+    For non-DP synthesizers, loads from data/synthetic/{name}/default/.
+    For DP synthesizers, synthesizer_name is in the form 'dpctgan/eps_1.0'
+    and data is loaded from data/synthetic/dpctgan/eps_1.0/.
+
     Args:
-        synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
+        synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae', or a
+                          DP source in the form 'dpctgan/eps_1.0'.
 
     Returns:
         Tuple of (real_train_df, synthetic_df).
     """
     real_df = pd.read_csv(DATA_DIR / "processed" / "train.csv")
-    synthetic_df = pd.read_csv(
-        DATA_DIR / "synthetic" / synthesizer_name / "default" / "synthetic_train.csv"
-    )
+
+    if "/" in synthesizer_name:
+        # DP source: synthesizer_name is e.g. 'dpctgan/eps_1.0'
+        synthetic_path = DATA_DIR / "synthetic" / synthesizer_name / "synthetic_train.csv"
+    else:
+        synthetic_path = DATA_DIR / "synthetic" / synthesizer_name / "default" / "synthetic_train.csv"
+
+    synthetic_df = pd.read_csv(synthetic_path)
     return real_df, synthetic_df
 
 
@@ -185,12 +201,15 @@ def evaluate_fidelity(synthesizer_name: str, use_wandb: bool = False) -> None:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    run_name = f"eval_fidelity_{synthesizer_name}_default"
+    run_name = f"eval_fidelity_{synthesizer_name.replace('/', '_')}"
     config = {"synthesizer": synthesizer_name, "evaluation": "fidelity"}
+
+    # For DP synthesizers, derive the base name for metadata lookup
+    metadata_key = synthesizer_name.split("/")[0] if "/" in synthesizer_name else synthesizer_name
 
     with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         real_df, synthetic_df = load_data(synthesizer_name)
-        metadata = load_metadata(MODELS_DIR, synthesizer_name)
+        metadata = load_metadata(MODELS_DIR, metadata_key, fallback=build_sdmetrics_metadata())
 
         print(f"Real training data: {len(real_df)} rows")
         print(f"Synthetic data:     {len(synthetic_df)} rows")
@@ -208,11 +227,22 @@ def main():
     parser = argparse.ArgumentParser(
         description="Evaluate fidelity of synthetic data using SDMetrics."
     )
+    # Build full list of valid synthesizer identifiers including DP variants
+    dp_sources = [
+        f"{synth}/eps_{eps}"
+        for synth in DP_SYNTHESIZERS
+        for eps in DP_EPSILONS
+    ]
+    all_synthesizers = SYNTHESIZERS + dp_sources
+
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS,
+        choices=all_synthesizers,
         required=True,
-        help="Synthesizer to evaluate.",
+        help=(
+            "Synthesizer to evaluate. For DP synthesizers use the form "
+            "'dpctgan/eps_1.0'."
+        ),
     )
     parser.add_argument(
         "--wandb",

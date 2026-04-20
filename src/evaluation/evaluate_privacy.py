@@ -1,8 +1,8 @@
 """
 evaluate_privacy.py
- 
+
 Privacy evaluation for synthetic data using Anonymeter and SDMetrics.
- 
+
 Runs four evaluations for each synthesizer:
   - Singling Out: can an attacker uniquely identify a real person using
     the synthetic data?
@@ -11,22 +11,26 @@ Runs four evaluations for each synthesizer:
     sex) from known attributes?
   - DCR Metrics: distance-based privacy metrics measuring whether synthetic
     data is memorizing training records (SDMetrics)
- 
+
 Results are always saved locally as JSON. W&B logging is optional.
- 
+
 The val set is used as the Anonymeter control dataset — it consists of
 real records that were not used to train the synthesizer, making it
 suitable for separating general population patterns from training-specific
 privacy leakage.
- 
+
 Usage:
     # Without W&B (default)
     python -m src.evaluation.evaluate_privacy --synthesizer gaussian_copula
     python -m src.evaluation.evaluate_privacy --synthesizer ctgan
     python -m src.evaluation.evaluate_privacy --synthesizer tvae
- 
+
     # With W&B logging
     python -m src.evaluation.evaluate_privacy --synthesizer ctgan --wandb
+
+    # DP synthesizers
+    python -m src.evaluation.evaluate_privacy --synthesizer dpctgan/eps_1.0
+    python -m src.evaluation.evaluate_privacy --synthesizer patectgan/eps_1.0
 """
 
 import argparse
@@ -41,12 +45,14 @@ from sdmetrics.single_table import DCRBaselineProtection, DCROverfittingProtecti
 
 from src.utility.constants import (
     DATA_DIR,
+    DP_EPSILONS,
+    DP_SYNTHESIZERS,
     RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
 )
 from src.utility.logger import RunLogger
-from src.utility.utils import load_metadata, set_random_seeds
+from src.utility.utils import build_sdmetrics_metadata, load_metadata, set_random_seeds
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -85,9 +91,14 @@ def load_data(
     val_df = pd.read_csv(DATA_DIR / "processed" / "validation.csv")
     test_df = pd.read_csv(DATA_DIR / "processed" / "test.csv")
     holdout_df = pd.concat([val_df, test_df], ignore_index=True)
-    synthetic_df = pd.read_csv(
-        DATA_DIR / "synthetic" / synthesizer_name / "default" / "synthetic_train.csv"
-    )
+
+    if "/" in synthesizer_name:
+        # DP source: synthesizer_name is e.g. 'dpctgan/eps_1.0'
+        synthetic_path = DATA_DIR / "synthetic" / synthesizer_name / "synthetic_train.csv"
+    else:
+        synthetic_path = DATA_DIR / "synthetic" / synthesizer_name / "default" / "synthetic_train.csv"
+
+    synthetic_df = pd.read_csv(synthetic_path)
     return train_df, holdout_df, synthetic_df
 
 
@@ -319,7 +330,7 @@ def evaluate_privacy(synthesizer_name: str, use_wandb: bool = False) -> None:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae'.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    run_name = f"eval_privacy_{synthesizer_name}_default"
+    run_name = f"eval_privacy_{synthesizer_name.replace('/', '_')}"
     config = {
         "synthesizer": synthesizer_name,
         "evaluation": "privacy",
@@ -327,9 +338,12 @@ def evaluate_privacy(synthesizer_name: str, use_wandb: bool = False) -> None:
         "sensitive_cols": SENSITIVE_COLS,
     }
 
+    # For DP synthesizers, derive the base name for metadata lookup
+    metadata_key = synthesizer_name.split("/")[0] if "/" in synthesizer_name else synthesizer_name
+
     with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         train_df, holdout_df, synthetic_df = load_data(synthesizer_name)
-        metadata = load_metadata(MODELS_DIR, synthesizer_name)
+        metadata = load_metadata(MODELS_DIR, metadata_key, fallback=build_sdmetrics_metadata())
 
         print(f"Real training data:  {len(train_df)} rows")
         print(f"Holdout data:        {len(holdout_df)} rows")
@@ -351,11 +365,22 @@ def main():
     parser = argparse.ArgumentParser(
         description="Evaluate privacy of synthetic data using Anonymeter and SDMetrics."
     )
+    # Build full list of valid synthesizer identifiers including DP variants
+    dp_sources = [
+        f"{synth}/eps_{eps}"
+        for synth in DP_SYNTHESIZERS
+        for eps in DP_EPSILONS
+    ]
+    all_synthesizers = SYNTHESIZERS + dp_sources
+
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS,
+        choices=all_synthesizers,
         required=True,
-        help="Synthesizer to evaluate.",
+        help=(
+            "Synthesizer to evaluate. For DP synthesizers use the form "
+            "'dpctgan/eps_1.0'."
+        ),
     )
     parser.add_argument(
         "--wandb",

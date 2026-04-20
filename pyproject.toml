@@ -14,6 +14,7 @@ dependencies = [
     "seaborn",
     "scikit-learn",
     "scipy",
+    "smartnoise-synth",
     "sdv",
     "sdmetrics",
     "anonymeter @ git+https://github.com/statice/anonymeter.git@v1.0.1",

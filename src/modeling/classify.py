@@ -1,36 +1,42 @@
 """
 classify.py
- 
+
 Binary classification pipeline for the Adult Census Income dataset.
 Supports five modes:
   - default:    train with default hyperparameters and evaluate on val set
   - sweep:      run a W&B hyperparameter sweep using val set only (requires --wandb)
   - fetch_best: fetch best hyperparameters from latest sweep and save to config/
-  - best:       train with best hyperparameters, evaluate on val, save model
-  - test:       evaluate saved model on test set (call once after tuning)
- 
+  - best:       train with best hyperparameters, evaluate on val, save model to disk
+  - test:       load model saved by --mode best and evaluate on real test set (call once after tuning)
+
 For TSTR evaluation, pass a synthesizer name as --data_source. The classifier
 will train on synthetic data and evaluate on real val and real test data.
- 
+
 The test set is structurally separated from all tuning modes.
 It is only loaded and evaluated in 'test' mode to prevent data leakage.
- 
+
 Usage:
     # Real data baseline — no W&B required
     python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real
     python -m src.modeling.classify --mode best --classifier logistic_regression --data_source real --params best_logistic_regression.yaml
     python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real
- 
+
     # With W&B logging
     python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real --wandb
- 
+
     # W&B sweep (requires --wandb)
     python -m src.modeling.classify --mode sweep --classifier logistic_regression --data_source real --wandb
     python -m src.modeling.classify --mode fetch_best --classifier logistic_regression --data_source real --wandb
- 
-    # TSTR with synthetic data
+
+    # TSTR with non-DP synthetic data
     python -m src.modeling.classify --mode default --classifier logistic_regression --data_source gaussian_copula
+    python -m src.modeling.classify --mode best --classifier logistic_regression --data_source gaussian_copula --params best_logistic_regression.yaml
     python -m src.modeling.classify --mode test --classifier logistic_regression --data_source gaussian_copula
+
+    # TSTR with DP synthetic data — --mode best must be run before --mode test
+    python -m src.modeling.classify --mode default --classifier logistic_regression --data_source dpctgan/eps_1.0
+    python -m src.modeling.classify --mode best --classifier logistic_regression --data_source dpctgan/eps_1.0 --params best_logistic_regression.yaml
+    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source dpctgan/eps_1.0
 """
 
 import argparse
@@ -59,6 +65,8 @@ from src.utility.constants import (
     BASE_DIR,
     CLASSIFIERS,
     DATA_DIR,
+    DP_EPSILONS,
+    DP_SYNTHESIZERS,
     MODELS_DIR,
     RANDOM_STATE,
     SYNTHESIZERS,
@@ -69,7 +77,15 @@ from src.utility.utils import set_random_seeds
 # ── Constants ────────────────────────────────────────────────────────────────
 
 CONFIG_DIR = BASE_DIR / "config"
+# Non-DP sources
 DATA_SOURCES = ["real"] + SYNTHESIZERS
+
+# DP sources: one entry per (synthesizer, epsilon) combination
+DP_DATA_SOURCES = [
+    f"{synth}/eps_{eps}" for synth in DP_SYNTHESIZERS for eps in DP_EPSILONS
+]
+
+ALL_DATA_SOURCES = DATA_SOURCES + DP_DATA_SOURCES
 N_ESTIMATORS_RF = 300
 
 PARAM_ABBREVIATIONS = {
@@ -99,13 +115,19 @@ def load_splits(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     after hyperparameter tuning is complete.
 
     Args:
-        data_source: One of 'real', 'gaussian_copula', 'ctgan', 'tvae'.
+        data_source: One of 'real', 'gaussian_copula', 'ctgan', 'tvae', or a
+                     DP source in the form 'dpctgan/eps_1.0'.
 
     Returns:
         Tuple of (train_df, val_df) DataFrames.
     """
     if data_source == "real":
         train_df = pd.read_csv(DATA_DIR / "processed" / "train.csv")
+    elif "/" in data_source:
+        # DP source: data_source is e.g. 'dpctgan/eps_1.0'
+        train_df = pd.read_csv(
+            DATA_DIR / "synthetic" / data_source / "synthetic_train.csv"
+        )
     else:
         train_df = pd.read_csv(
             DATA_DIR / "synthetic" / data_source / "default" / "synthetic_train.csv"
@@ -353,7 +375,7 @@ def train_and_evaluate(
 
         if save_model:
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
-            model_path = MODELS_DIR / f"{data_source}_{classifier_name}.pkl"
+            model_path = MODELS_DIR / f"{data_source.replace('/', '_')}_{classifier_name}.pkl"
             with open(model_path, "wb") as f:
                 pickle.dump({"model": model, "preprocessor": preprocessor}, f)
             print(f"Model saved to {model_path.resolve()}")
@@ -383,7 +405,7 @@ def evaluate_on_test(
         data_source: One of 'real', 'gaussian_copula', 'ctgan', 'tvae'.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    model_path = MODELS_DIR / f"{data_source}_{classifier_name}.pkl"
+    model_path = MODELS_DIR / f"{data_source.replace('/', '_')}_{classifier_name}.pkl"
     if not model_path.exists():
         raise FileNotFoundError(
             f"No saved model found at {model_path}. "
@@ -398,12 +420,8 @@ def evaluate_on_test(
     test_df = load_test()
     X_test, y_test = prepare_single(classifier_name, test_df, preprocessor)
 
-    run_name = f"eval_utility_{classifier_name}_{data_source}"
-    config = {
-        "classifier": classifier_name, 
-        "data_source": data_source,
-        "evaluation": "utility",
-        }
+    run_name = f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}"
+    config = {"classifier": classifier_name, "data_source": data_source}
 
     with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         logger.log(compute_metrics(y_test, model.predict(X_test), prefix="test"))
@@ -525,7 +543,7 @@ def main():
             "sweep: run W&B hyperparameter sweep (requires --wandb). "
             "fetch_best: fetch best params from W&B sweep (requires --wandb). "
             "best: train with best params, evaluate on train and val, save model. "
-            "test: evaluate saved model on real test set (once after tuning)."
+            "test: load model saved by --mode best and evaluate on real test set (call once after tuning)."
         ),
     )
     parser.add_argument(
@@ -536,9 +554,12 @@ def main():
     )
     parser.add_argument(
         "--data_source",
-        choices=DATA_SOURCES,
+        choices=ALL_DATA_SOURCES,
         default="real",
-        help="Data source to use. Default: real.",
+        help=(
+            "Data source to use. Default: real. "
+            "For DP sources use the form 'dpctgan/eps_1.0'."
+        ),
     )
     parser.add_argument(
         "--params",
@@ -569,7 +590,7 @@ def main():
             classifier_name=args.classifier,
             data_source=args.data_source,
             params={"seed": RANDOM_STATE},
-            run_name=f"{args.data_source}_{args.classifier}_default",
+            run_name=f"{args.data_source.replace('/', '_')}_{args.classifier}_default",
             use_wandb=args.wandb,
         )
 
@@ -589,7 +610,7 @@ def main():
             classifier_name=args.classifier,
             data_source=args.data_source,
             params=best_params,
-            run_name=f"{args.data_source}_{args.classifier}_best",
+            run_name=f"{args.data_source.replace('/', '_')}_{args.classifier}_best",
             save_model=True,
             use_wandb=args.wandb,
         )

@@ -13,6 +13,8 @@ Usage:
         RANDOM_STATE,
         WANDB_PROJECT,
         SYNTHESIZERS,
+        DP_SYNTHESIZERS,
+        DP_EPSILONS,
         BASE_DIR,
         DATA_DIR,
         MODELS_DIR,
@@ -34,6 +36,21 @@ WANDB_PROJECT = "synthetic-data-eval"
 # ── Synthesizers ──────────────────────────────────────────────────────────────
 
 SYNTHESIZERS = ["gaussian_copula", "ctgan", "tvae"]
+
+# ── DP Synthesizers ───────────────────────────────────────────────────────────
+
+DP_SYNTHESIZERS = ["dpctgan", "patectgan"]
+
+# Epsilon values following a logarithmic scale spanning the range commonly
+# used in DP literature. epsilon=0.1 represents a strong privacy guarantee,
+# epsilon=1 corresponds to the threshold cited in Dwork & Roth (2014),
+# epsilon=5 and epsilon=10 represent progressively weaker guarantees.
+DP_EPSILONS = [0.1, 1.0, 5.0, 10.0]
+
+# Fraction of epsilon allocated to the preprocessor for inferring continuous
+# column bounds. Standard practice to avoid consuming the full budget on
+# preprocessing alone.
+DP_PREPROCESSOR_EPS_FRACTION = 0.1
 
 # ── Classifiers ───────────────────────────────────────────────────────────────
 
