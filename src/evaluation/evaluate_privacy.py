@@ -1,8 +1,8 @@
 """
 evaluate_privacy.py
-
+ 
 Privacy evaluation for synthetic data using Anonymeter and SDMetrics.
-
+ 
 Runs four evaluations for each synthesizer:
   - Singling Out: can an attacker uniquely identify a real person using
     the synthetic data?
@@ -11,22 +11,22 @@ Runs four evaluations for each synthesizer:
     sex) from known attributes?
   - DCR Metrics: distance-based privacy metrics measuring whether synthetic
     data is memorizing training records (SDMetrics)
-
+ 
 Results are always saved locally as JSON. W&B logging is optional.
-
+ 
 The val set is used as the Anonymeter control dataset — it consists of
 real records that were not used to train the synthesizer, making it
 suitable for separating general population patterns from training-specific
 privacy leakage.
-
+ 
 Usage:
     # Without W&B (default)
-    python evaluate_privacy.py --synthesizer gaussian_copula
-    python evaluate_privacy.py --synthesizer ctgan
-    python evaluate_privacy.py --synthesizer tvae
-
+    python -m src.evaluation.evaluate_privacy --synthesizer gaussian_copula
+    python -m src.evaluation.evaluate_privacy --synthesizer ctgan
+    python -m src.evaluation.evaluate_privacy --synthesizer tvae
+ 
     # With W&B logging
-    python evaluate_privacy.py --synthesizer ctgan --wandb
+    python -m src.evaluation.evaluate_privacy --synthesizer ctgan --wandb
 """
 
 import argparse

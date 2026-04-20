@@ -1,12 +1,12 @@
 """
 evaluate_fidelity.py
-
+ 
 Fidelity evaluation for synthetic data using standalone SDMetrics.
-
+ 
 SDMetrics is model-agnostic and evaluates synthetic data independently
 of how it was generated. This ensures the evaluation pipeline is
 reproducible and applicable to any synthesizer, not just SDV models.
-
+ 
 Runs two reports for each synthesizer:
   - QualityReport: measures statistical similarity between synthetic and
     real data across two dimensions:
@@ -14,18 +14,18 @@ Runs two reports for each synthesizer:
       * Column Pair Trends: bivariate correlation similarity
   - DiagnosticReport: checks synthetic data validity, including
     out-of-range values and invalid categories
-
+ 
 Results are always saved locally as JSON. W&B logging is optional.
 Per-column scores are logged as W&B tables when W&B is enabled.
-
+ 
 Usage:
     # Without W&B (default)
-    python evaluate_fidelity.py --synthesizer gaussian_copula
-    python evaluate_fidelity.py --synthesizer ctgan
-    python evaluate_fidelity.py --synthesizer tvae
-
+    python -m src.evaluation.evaluate_fidelity --synthesizer gaussian_copula
+    python -m src.evaluation.evaluate_fidelity --synthesizer ctgan
+    python -m src.evaluation.evaluate_fidelity --synthesizer tvae
+ 
     # With W&B logging
-    python evaluate_fidelity.py --synthesizer ctgan --wandb
+    python -m src.evaluation.evaluate_fidelity --synthesizer ctgan --wandb
 """
 
 import argparse

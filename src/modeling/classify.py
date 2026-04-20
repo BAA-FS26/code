@@ -1,6 +1,6 @@
 """
 classify.py
-
+ 
 Binary classification pipeline for the Adult Census Income dataset.
 Supports five modes:
   - default:    train with default hyperparameters and evaluate on val set
@@ -8,29 +8,29 @@ Supports five modes:
   - fetch_best: fetch best hyperparameters from latest sweep and save to config/
   - best:       train with best hyperparameters, evaluate on val, save model
   - test:       evaluate saved model on test set (call once after tuning)
-
+ 
 For TSTR evaluation, pass a synthesizer name as --data_source. The classifier
 will train on synthetic data and evaluate on real val and real test data.
-
+ 
 The test set is structurally separated from all tuning modes.
 It is only loaded and evaluated in 'test' mode to prevent data leakage.
-
+ 
 Usage:
     # Real data baseline — no W&B required
-    python classify.py --mode default --classifier logistic_regression --data_source real
-    python classify.py --mode best --classifier logistic_regression --data_source real --params best_logistic_regression.yaml
-    python classify.py --mode test --classifier logistic_regression --data_source real
-
+    python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real
+    python -m src.modeling.classify --mode best --classifier logistic_regression --data_source real --params best_logistic_regression.yaml
+    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real
+ 
     # With W&B logging
-    python classify.py --mode default --classifier logistic_regression --data_source real --wandb
-
+    python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real --wandb
+ 
     # W&B sweep (requires --wandb)
-    python classify.py --mode sweep --classifier logistic_regression --data_source real --wandb
-    python classify.py --mode fetch_best --classifier logistic_regression --data_source real --wandb
-
+    python -m src.modeling.classify --mode sweep --classifier logistic_regression --data_source real --wandb
+    python -m src.modeling.classify --mode fetch_best --classifier logistic_regression --data_source real --wandb
+ 
     # TSTR with synthetic data
-    python classify.py --mode default --classifier logistic_regression --data_source gaussian_copula
-    python classify.py --mode test --classifier logistic_regression --data_source gaussian_copula
+    python -m src.modeling.classify --mode default --classifier logistic_regression --data_source gaussian_copula
+    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source gaussian_copula
 """
 
 import argparse

@@ -1,27 +1,27 @@
 """
 synthesize.py
-
+ 
 Synthesis pipeline for the Adult Census Income dataset.
 Trains a synthesizer on the real training data and generates a synthetic
 dataset of equal size.
-
+ 
 Supported synthesizers:
   - gaussian_copula
   - ctgan
   - tvae
-
+ 
 Usage:
     # Without W&B (default)
-    python synthesize.py --synthesizer gaussian_copula
-    python synthesize.py --synthesizer ctgan
-    python synthesize.py --synthesizer tvae
-
+    python -m src.modeling.synthesize --synthesizer gaussian_copula
+    python -m src.modeling.synthesize --synthesizer ctgan
+    python -m src.modeling.synthesize --synthesizer tvae
+ 
     # With W&B logging
-    python synthesize.py --synthesizer ctgan --wandb
-
+    python -m src.modeling.synthesize --synthesizer ctgan --wandb
+ 
     # With GPU acceleration (CTGAN and TVAE only)
-    python synthesize.py --synthesizer ctgan --cuda
-    python synthesize.py --synthesizer ctgan --cuda --wandb
+    python -m src.modeling.synthesize --synthesizer ctgan --cuda
+    python -m src.modeling.synthesize --synthesizer ctgan --cuda --wandb
 """
 
 import argparse
