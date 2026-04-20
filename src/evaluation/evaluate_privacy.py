@@ -48,8 +48,10 @@ from src.utility.utils import load_metadata
 # ── Constants ────────────────────────────────────────────────────────────────
 
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
-N_ATTACKS = 5000
-SENSITIVE_COLS = ["income", "race", "sex", "age"]
+N_ATTACKS = 2000
+
+# based on EDA findings
+SENSITIVE_COLS = ["income", "occupation", "sex"]
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -192,9 +194,11 @@ def run_inference(
     Run Anonymeter InferenceEvaluator for each sensitive column and log
     results to W&B.
 
-    Measures whether an attacker can infer the value of a sensitive
-    attribute from the remaining known attributes. Evaluated separately
-    for income, race and sex.
+    Models an attacker who possesses all available attributes except the
+    target attribute as auxiliary information, following the methodology
+    of Giomi et al. (2023). Sensitive target attributes are defined in
+    SENSITIVE_COLS and selected based on their inter-feature associations
+    and relevance under applicable data protection regulations.
 
     A risk value near 0 indicates good privacy protection.
 
@@ -207,7 +211,6 @@ def run_inference(
 
     for secret in SENSITIVE_COLS:
         aux_cols = [c for c in train_df.columns if c != secret]
-
         evaluator = InferenceEvaluator(
             ori=train_df,
             syn=synthetic_df,

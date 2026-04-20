@@ -43,7 +43,6 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
-    roc_auc_score,
 )
 
 from src.dataset.feature_engineering import (
