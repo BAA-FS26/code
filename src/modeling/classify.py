@@ -398,8 +398,12 @@ def evaluate_on_test(
     test_df = load_test()
     X_test, y_test = prepare_single(classifier_name, test_df, preprocessor)
 
-    run_name = f"{data_source}_{classifier_name}_test"
-    config = {"classifier": classifier_name, "data_source": data_source}
+    run_name = f"eval_utility_{classifier_name}_{data_source}"
+    config = {
+        "classifier": classifier_name, 
+        "data_source": data_source,
+        "evaluation": "utility",
+        }
 
     with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
         logger.log(compute_metrics(y_test, model.predict(X_test), prefix="test"))
