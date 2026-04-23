@@ -1,24 +1,24 @@
 """
 synthesize.py
- 
+
 Synthesis pipeline for the Adult Census Income dataset.
 Trains a synthesizer on the real training data and generates a synthetic
 dataset of equal size.
- 
+
 Supported synthesizers:
   - gaussian_copula
   - ctgan
   - tvae
- 
+
 Usage:
     # Without W&B (default)
     python -m src.modeling.synthesize --synthesizer gaussian_copula
     python -m src.modeling.synthesize --synthesizer ctgan
     python -m src.modeling.synthesize --synthesizer tvae
- 
+
     # With W&B logging
     python -m src.modeling.synthesize --synthesizer ctgan --wandb
- 
+
     # With GPU acceleration (CTGAN and TVAE only)
     python -m src.modeling.synthesize --synthesizer ctgan --cuda
     python -m src.modeling.synthesize --synthesizer ctgan --cuda --wandb
@@ -26,6 +26,7 @@ Usage:
 
 import argparse
 import time
+from pathlib import Path
 
 import pandas as pd
 import torch
@@ -37,17 +38,107 @@ from sdv.single_table import (
 )
 
 from src.utility.constants import (
-    DATA_DIR,
+    PROCESSED_DATA_DIR,
     RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
+    SYNTHETIC_DATA_DIR,
+    SYNTHETIC_TRAIN_FILENAME,
+    TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import set_random_seeds
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MODELS_DIR = SYNTHESIZER_MODELS_DIR
+SCRIPT_NAME = "synthesize.py"
+MODELS_SUBDIR = SYNTHESIZER_MODELS_DIR
+
+
+# ── Path helpers ──────────────────────────────────────────────────────────────
+
+
+def _training_data_path() -> Path:
+    """Return the canonical path to the real training split."""
+    return PROCESSED_DATA_DIR / TRAIN_FILENAME
+
+
+def _metadata_path(synthesizer_name: str) -> Path:
+    """Return the canonical metadata path for a synthesizer."""
+    return MODELS_SUBDIR / f"{synthesizer_name}_metadata.json"
+
+
+def _model_path(synthesizer_name: str) -> Path:
+    """Return the canonical saved synthesizer model path."""
+    return MODELS_SUBDIR / f"{synthesizer_name}_default.pkl"
+
+
+def _synthetic_output_dir(synthesizer_name: str) -> Path:
+    """Return the canonical output directory for synthetic training data."""
+    return SYNTHETIC_DATA_DIR / synthesizer_name / "default"
+
+
+def _synthetic_output_path(synthesizer_name: str) -> Path:
+    """Return the canonical synthetic training data output path."""
+    return _synthetic_output_dir(synthesizer_name) / SYNTHETIC_TRAIN_FILENAME
+
+
+# ── Data loading and validation ───────────────────────────────────────────────
+
+
+def _load_training_data() -> pd.DataFrame:
+    """
+    Load the real training split from disk.
+
+    Returns:
+        Training DataFrame.
+
+    Raises:
+        FileNotFoundError: If the canonical training split does not exist.
+    """
+    train_path = _training_data_path()
+    if not train_path.exists():
+        raise FileNotFoundError(
+            f"Training split not found at {train_path}. "
+            "Run the dataset cleaning and splitting pipeline first."
+        )
+
+    train_df = pd.read_csv(train_path)
+    print(
+        f"[synthesize] Loaded training data from {train_path.resolve()} ({len(train_df)} rows)"
+    )
+    return train_df
+
+
+def _validate_synthetic_output(
+    train_df: pd.DataFrame,
+    synthetic_df: pd.DataFrame,
+    expected_rows: int,
+) -> None:
+    """
+    Validate the generated synthetic dataset before saving.
+
+    Args:
+        train_df: Real training DataFrame used to fit the synthesizer.
+        synthetic_df: Generated synthetic DataFrame.
+        expected_rows: Expected number of synthetic rows.
+
+    Raises:
+        ValueError: If row count or columns do not match expectations.
+    """
+    if len(synthetic_df) != expected_rows:
+        raise ValueError(
+            f"Synthetic data has {len(synthetic_df)} rows, expected {expected_rows}."
+        )
+
+    train_columns = list(train_df.columns)
+    synthetic_columns = list(synthetic_df.columns)
+    if synthetic_columns != train_columns:
+        raise ValueError(
+            "Synthetic data columns do not match training data columns.\n"
+            f"Expected: {train_columns}\n"
+            f"Actual:   {synthetic_columns}"
+        )
 
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
@@ -57,9 +148,12 @@ def build_metadata(df: pd.DataFrame) -> Metadata:
     """
     Auto-detect and validate SDV metadata from a DataFrame.
 
-    Auto-detects column types from the DataFrame using the new SDV
-    Metadata class and applies manual corrections for columns that
-    are commonly misidentified:
+    This function is the canonical source of SDV metadata generation for
+    non-DP synthesizers in this pipeline. Evaluation scripts later reuse
+    the metadata persisted by this script.
+
+    Auto-detects column types from the DataFrame using the SDV Metadata
+    class and applies a manual correction for the target column:
     - income: explicitly set to categorical to ensure correct handling
 
     Args:
@@ -75,7 +169,7 @@ def build_metadata(df: pd.DataFrame) -> Metadata:
         sdtype="categorical",
     )
     metadata.validate()
-    print("Metadata validated successfully.")
+    print("[synthesize] Metadata validated successfully.")
     return metadata
 
 
@@ -124,18 +218,21 @@ def print_gpu_info(synthesizer_name: str, cuda: bool) -> None:
         cuda: Whether GPU was requested via --cuda flag.
     """
     if synthesizer_name not in ("ctgan", "tvae"):
-        print("GPU acceleration: not applicable for GaussianCopula")
+        print("[synthesize] GPU acceleration: not applicable for GaussianCopula")
         return
 
     gpu_available = torch.cuda.is_available()
     gpu_in_use = cuda and gpu_available
 
-    print(f"GPU available:  {gpu_available}")
-    print(f"GPU requested:  {cuda}")
-    print(f"GPU in use:     {gpu_in_use}")
+    print(f"[synthesize] GPU available: {gpu_available}")
+    print(f"[synthesize] GPU requested: {cuda}")
+    print(f"[synthesize] GPU in use: {gpu_in_use}")
 
     if cuda and not gpu_available:
-        print("Warning: --cuda was set but no GPU is available. Falling back to CPU.")
+        print(
+            "[synthesize] Warning: --cuda was set but no GPU is available. "
+            "Falling back to CPU."
+        )
 
 
 # ── Loss logging ──────────────────────────────────────────────────────────────
@@ -202,55 +299,73 @@ def train_and_generate(
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
     run_name = f"synthesizer_{synthesizer_name}_default"
+    gpu_available = torch.cuda.is_available()
+    gpu_in_use = cuda and gpu_available
 
-    config = {
+    parameters = {
         "synthesizer": synthesizer_name,
         "mode": "default",
-        "cuda": cuda,
-        "gpu_in_use": cuda and torch.cuda.is_available(),
+        "cuda_requested": cuda,
+        "gpu_available": gpu_available,
+        "gpu_in_use": gpu_in_use,
+        "random_state": RANDOM_STATE,
+        "use_wandb": use_wandb,
+        "reproducibility_note": (
+            "Random seeds and deterministic PyTorch settings are enabled where "
+            "possible. Some GPU operations and third-party model internals may "
+            "still remain nondeterministic."
+        ),
     }
 
-    with RunLogger(run_name=run_name, config=config, use_wandb=use_wandb) as logger:
-        train_df = pd.read_csv(DATA_DIR / "processed" / "train.csv")
+    with RunLogger(
+        run_name=run_name,
+        script_name=SCRIPT_NAME,
+        parameters=parameters,
+        use_wandb=use_wandb,
+    ) as logger:
+        train_df = _load_training_data()
         n_samples = len(train_df)
-        print(f"Loaded training data: {n_samples} rows")
 
         metadata = build_metadata(train_df)
         set_random_seeds(RANDOM_STATE)
 
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        metadata_path = MODELS_DIR / f"{synthesizer_name}_metadata.json"
+        MODELS_SUBDIR.mkdir(parents=True, exist_ok=True)
+
+        metadata_path = _metadata_path(synthesizer_name)
         if metadata_path.exists():
             print(
-                f"Metadata already exists at {metadata_path.resolve()}, skipping save."
+                f"[synthesize] Metadata already exists at {metadata_path.resolve()}, "
+                "skipping save."
             )
         else:
             metadata.save_to_json(str(metadata_path))
-            print(f"Metadata saved to {metadata_path.resolve()}")
+            print(f"[synthesize] Metadata saved to {metadata_path.resolve()}")
 
         synthesizer = build_synthesizer(synthesizer_name, metadata, cuda=cuda)
         print_gpu_info(synthesizer_name, cuda)
 
-        print(f"Training {synthesizer_name}...")
+        print(f"[synthesize] Training {synthesizer_name}...")
         start_time = time.time()
         synthesizer.fit(train_df)
         training_time = time.time() - start_time
-        print(f"Training complete in {training_time:.1f}s")
+        print(f"[synthesize] Training complete in {training_time:.1f}s")
 
         log_loss_values(synthesizer_name, synthesizer, logger)
 
-        print(f"Generating {n_samples} synthetic samples...")
+        print(f"[synthesize] Generating {n_samples} synthetic samples...")
         synthetic_df = synthesizer.sample(num_rows=n_samples)
+        _validate_synthetic_output(train_df, synthetic_df, expected_rows=n_samples)
 
-        model_path = MODELS_DIR / f"{synthesizer_name}_default.pkl"
+        model_path = _model_path(synthesizer_name)
         synthesizer.save(str(model_path))
-        print(f"Synthesizer saved to {model_path.resolve()}")
+        print(f"[synthesize] Synthesizer saved to {model_path.resolve()}")
 
-        out_dir = DATA_DIR / "synthetic" / synthesizer_name / "default"
+        out_dir = _synthetic_output_dir(synthesizer_name)
         out_dir.mkdir(parents=True, exist_ok=True)
-        synthetic_path = out_dir / "synthetic_train.csv"
+
+        synthetic_path = _synthetic_output_path(synthesizer_name)
         synthetic_df.to_csv(synthetic_path, index=False)
-        print(f"Synthetic data saved to {synthetic_path.resolve()}")
+        print(f"[synthesize] Synthetic data saved to {synthetic_path.resolve()}")
 
         logger.log(
             {
@@ -258,6 +373,9 @@ def train_and_generate(
                 "n_samples_train": n_samples,
                 "n_samples_synthetic": len(synthetic_df),
                 "n_features": len(train_df.columns),
+                "metadata_path": metadata_path,
+                "model_path": model_path,
+                "synthetic_data_path": synthetic_path,
             }
         )
 
@@ -265,7 +383,7 @@ def train_and_generate(
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Train a synthesizer and generate synthetic data."
     )
@@ -285,7 +403,7 @@ def main():
         "--wandb",
         action="store_true",
         default=False,
-        help="Log results to Weights & Biases. Requires WANDB_ENTITY to be set.",
+        help="Log results to Weights & Biases. Local JSON logging remains primary.",
     )
 
     args = parser.parse_args()

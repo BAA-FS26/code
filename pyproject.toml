@@ -1,27 +1,44 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "baa_synthetic_data"
 version = "0.1.0"
 description = "Evaluation of Synthetic Data as PET in ML"
+requires-python = ">=3.12,<3.13"
+
 dependencies = [
-    "ucimlrepo",
-    "numpy",
-    "pandas",
-    "matplotlib",
-    "seaborn",
-    "scikit-learn",
-    "scipy",
-    "smartnoise-synth",
-    "sdv",
-    "sdmetrics",
-    "anonymeter @ git+https://github.com/statice/anonymeter.git@v1.0.1",
-    "pyarrow",
-    "wandb"
+    # Core data / ML stack
+    "numpy==1.26.4",
+    "pandas==2.3.3",
+    "scipy==1.17.1",
+    "scikit-learn==1.8.0",
+    "matplotlib==3.10.8",
+    "seaborn==0.13.2",
+    "pyarrow==23.0.1",
+    "PyYAML==6.0.3",
+
+    # Dataset loading
+    "ucimlrepo==0.0.7",
+
+    # Synthetic data generation and evaluation
+    "sdv==1.35.0",
+    "sdmetrics==0.28.0",
+    "smartnoise-synth==1.0.8",
+    "anonymeter @ git+https://github.com/statice/anonymeter.git@714ff2cee36803e8acf07691860d75fdaf00fec7",
+
+    # Deep learning runtime
+    # Install the appropriate torch build for your platform/environment.
+    # Example for CUDA 13.0 wheels:
+    #   pip install -e . --extra-index-url https://download.pytorch.org/whl/cu130
+    "torch==2.11.0",
 ]
+
+[project.optional-dependencies]
+# Optional experiment tracking. The local JSON logging path remains primary.
+wandb = ["wandb==0.25.1"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[build-system]
+requires = ["setuptools==81.0.0", "wheel"]
+build-backend = "setuptools.build_meta"

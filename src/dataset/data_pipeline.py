@@ -2,10 +2,11 @@
 data_pipeline.py
 
 Generic data pipeline utilities for tabular classification datasets.
+
 Handles stratified train/validation/test splitting and split verification.
 
 Dataset-specific logic (loading, cleaning, column definitions) belongs in
-the dataset adapter module — see src/dataset/adult_census.py for the
+the dataset adapter module — see src.dataset.adult_census.py for the
 Adult Census Income implementation.
 
 Usage:
@@ -18,7 +19,45 @@ from typing import Optional, Tuple, Union
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.utility.constants import RANDOM_STATE
+from src.utility.constants import (
+    RANDOM_STATE,
+    TEST_FILENAME,
+    TRAIN_FILENAME,
+    VALIDATION_FILENAME,
+)
+
+
+def _validate_split_inputs(df: pd.DataFrame, target_col: str) -> None:
+    """
+    Validate that a DataFrame is ready for stratified train/val/test splitting.
+
+    Raises:
+        ValueError: If the DataFrame is empty, the target contains missing
+                    values, or any class has too few samples for stratification.
+        KeyError: If target_col is not present in df.
+    """
+    if df.empty:
+        raise ValueError("Cannot split an empty DataFrame.")
+
+    if target_col not in df.columns:
+        raise KeyError(
+            f"Target column '{target_col}' not found in DataFrame. "
+            f"Available columns: {df.columns.tolist()}"
+        )
+
+    if df[target_col].isna().any():
+        raise ValueError(
+            f"Target column '{target_col}' contains missing values. "
+            "Please clean or impute the target column before splitting."
+        )
+
+    class_counts = df[target_col].value_counts(dropna=False)
+    if (class_counts < 2).any():
+        too_small = class_counts[class_counts < 2].to_dict()
+        raise ValueError(
+            "Stratified splitting requires at least 2 samples per class. "
+            f"Classes with insufficient samples: {too_small}"
+        )
 
 
 def split_data(
@@ -35,8 +74,11 @@ def split_data(
     splits. Stratification is particularly important for imbalanced datasets.
 
     The splits are saved as train.csv, validation.csv and test.csv in
-    output_dir and returned as DataFrames. The test set must remain
-    untouched until final evaluation to prevent data leakage.
+    output_dir and returned as DataFrames. Returned DataFrames match the
+    persisted CSV contents exactly, including reset integer indices.
+
+    The test set must remain untouched until final evaluation to prevent
+    data leakage.
 
     Args:
         df: Cleaned DataFrame ready for splitting.
@@ -47,15 +89,8 @@ def split_data(
 
     Returns:
         Tuple of (train_df, val_df, test_df) DataFrames.
-
-    Raises:
-        KeyError: If target_col is not present in df.
     """
-    if target_col not in df.columns:
-        raise KeyError(
-            f"Target column '{target_col}' not found in DataFrame. "
-            f"Available columns: {df.columns.tolist()}"
-        )
+    _validate_split_inputs(df, target_col)
 
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -73,13 +108,20 @@ def split_data(
         random_state=random_state,
     )
 
+    train_df = train_df.reset_index(drop=True)
+    val_df = val_df.reset_index(drop=True)
+    test_df = test_df.reset_index(drop=True)
+
     for filename, split in [
-        ("train.csv", train_df),
-        ("validation.csv", val_df),
-        ("test.csv", test_df),
+        (TRAIN_FILENAME, train_df),
+        (VALIDATION_FILENAME, val_df),
+        (TEST_FILENAME, test_df),
     ]:
         split.to_csv(out_path / filename, index=False)
-        print(f"Saved {filename} ({len(split)} rows) to {out_path.resolve()}")
+        print(
+            f"[data_pipeline] Saved {filename} ({len(split)} rows) "
+            f"to {out_path.resolve()}"
+        )
 
     return train_df, val_df, test_df
 
@@ -102,10 +144,22 @@ def verify_stratification(
     Returns:
         DataFrame showing the class distribution (%) for each split side by
         side, useful for confirming stratification was applied correctly.
+
+    Raises:
+        KeyError: If target_col is missing from any split DataFrame.
     """
-    return pd.DataFrame(
+    for split_name, split_df in [("train", train), ("val", val), ("test", test)]:
+        if target_col not in split_df.columns:
+            raise KeyError(
+                f"Target column '{target_col}' not found in {split_name} split. "
+                f"Available columns: {split_df.columns.tolist()}"
+            )
+
+    summary = pd.DataFrame(
         {
             name: df[target_col].value_counts(normalize=True).mul(100).round(2)
             for name, df in zip(["Train", "Val", "Test"], [train, val, test])
         }
     )
+
+    return summary.sort_index()
