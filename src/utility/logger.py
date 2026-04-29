@@ -64,6 +64,8 @@ class RunLogger:
                    be set in the environment. Defaults to False.
         results_dir: Directory for local JSON results. Defaults to
                      RESULTS_DIR from constants.
+        category: Optional result category subdirectory below results_dir,
+            for example "fidelity", "privacy", or "utility".
     """
 
     def __init__(
@@ -73,12 +75,16 @@ class RunLogger:
         parameters: dict[str, Any],
         use_wandb: bool = False,
         results_dir: Path = RESULTS_DIR,
+        category: str | None = None,  # NEW
     ) -> None:
         self.run_name = run_name
         self.script_name = script_name
         self.parameters = parameters
         self.use_wandb = use_wandb
-        self.results_dir = Path(results_dir)
+        base_results_dir = Path(results_dir)
+        self.results_dir = (
+            base_results_dir / category if category is not None else base_results_dir
+        )
 
         self._results: dict[str, Any] = {}
         self._history: list[dict[str, Any]] = []
@@ -167,13 +173,25 @@ class RunLogger:
         )
 
     def _save_locally(self) -> None:
-        self.results_dir.mkdir(parents=True, exist_ok=True)
+        timestamp_dt = datetime.now(timezone.utc)
+        timestamp = timestamp_dt.isoformat()
+
+        date_str = timestamp_dt.strftime("%Y-%m-%d")
+        time_str = timestamp_dt.strftime("%H%M%S")
+
+        category = (
+            self.results_dir.name if self.results_dir != Path(RESULTS_DIR) else None
+        )
+
+        output_dir = self.results_dir / date_str
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         payload = {
             RESULTS_KEY_SCHEMA_VERSION: RESULTS_SCHEMA_VERSION,
             RESULTS_KEY_SCRIPT: self.script_name,
+            "category": category,
             RESULTS_KEY_RUN_NAME: self.run_name,
-            RESULTS_KEY_TIMESTAMP: datetime.now(timezone.utc).isoformat(),
+            RESULTS_KEY_TIMESTAMP: timestamp,
             RESULTS_KEY_PARAMETERS: self._normalize_value(self.parameters),
             RESULTS_KEY_RESULTS: {
                 "status": self._status,
@@ -186,7 +204,8 @@ class RunLogger:
         if self._error is not None:
             payload[RESULTS_KEY_RESULTS]["error"] = self._normalize_value(self._error)
 
-        out_path = self.results_dir / f"{self.run_name}.json"
+        out_path = output_dir / f"{self.run_name}_{time_str}.json"
+
         with open(out_path, "w", encoding=DEFAULT_ENCODING) as f:
             json.dump(payload, f, indent=JSON_INDENT)
 

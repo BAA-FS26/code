@@ -341,6 +341,7 @@ def evaluate_fidelity(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="fidelity",
     ) as logger:
         real_df, synthetic_df, real_path, synthetic_path = load_data(
             synthesizer_name=synthesizer_name,

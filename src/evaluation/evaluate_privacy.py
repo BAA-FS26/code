@@ -8,7 +8,7 @@ Runs four evaluations for each synthesizer:
     the synthetic data?
   - Linkability: can an attacker link two records to the same person?
   - Inference: can an attacker infer sensitive attributes (income, race,
-    sex) from known attributes?
+    sex, relationship) from known attributes?
   - DCR Metrics: distance-based privacy metrics measuring whether synthetic
     data is memorizing training records (SDMetrics)
 
@@ -71,7 +71,7 @@ MODELS_DIR = SYNTHESIZER_MODELS_DIR
 N_ATTACKS = 2000
 
 # Based on EDA findings — inter-feature associations and data protection relevance
-SENSITIVE_COLS = ["income", "occupation", "sex"]
+SENSITIVE_COLS = ["income", "occupation", "sex", "relationship"]
 
 
 # ── Path and argument helpers ────────────────────────────────────────────────
@@ -454,6 +454,7 @@ def evaluate_privacy(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="privacy"
     ) as logger:
         train_df, holdout_df, synthetic_df, paths = load_data(
             synthesizer_name=synthesizer_name,

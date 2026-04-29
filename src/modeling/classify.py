@@ -3,41 +3,39 @@ classify.py
 
 Binary classification pipeline for the Adult Census Income dataset.
 
-Supports five modes:
-  - default:    train with default hyperparameters and evaluate on val set
-  - sweep:      run a W&B hyperparameter sweep using val set only (requires --wandb)
+Modes:
+  - default:    train with default hyperparameters and evaluate on validation set
+  - sweep:      run a W&B hyperparameter sweep on validation set (requires --wandb)
   - fetch_best: fetch best hyperparameters from latest sweep and save to config/
-  - best:       train with best hyperparameters, evaluate on val, save model to disk
-  - test:       load model saved by --mode best and evaluate on real test set
-                (call once after tuning)
+  - best:       train with best hyperparameters, evaluate on validation set, and save model
+  - test:       evaluate saved model on the held-out test set
 
-For TSTR evaluation, pass a synthesizer name as --data_source. The classifier
-will train on synthetic data and evaluate on real val and real test data.
+Data sources:
+  - real: use --data_source real
+  - synthetic: use --synthesizer <name>
+  - DP synthetic: use --synthesizer <name> --epsilon <value>
 
-The test set is structurally separated from all tuning modes.
-It is only loaded and evaluated in 'test' mode to prevent data leakage.
+The test set is only used in 'test' mode.
 
 Usage:
-    # Real data baseline — no W&B required
+
+    # Real data
     python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real
     python -m src.modeling.classify --mode best --classifier logistic_regression --data_source real --params best_logistic_regression_real.yaml
     python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real
 
-    # With W&B logging
-    python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real --wandb
-
-    # W&B sweep (requires --wandb)
+    # W&B sweep
     python -m src.modeling.classify --mode sweep --classifier logistic_regression --data_source real --wandb
     python -m src.modeling.classify --mode fetch_best --classifier logistic_regression --data_source real --wandb
 
-    # TSTR with non-DP synthetic data
+    # TSTR (non-DP)
     python -m src.modeling.classify --mode default --classifier logistic_regression --synthesizer gaussian_copula
-    python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer gaussian_copula --params best_logistic_regression_gaussian_copula.yaml
+    python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer gaussian_copula --params best_logistic_regression_real.yaml
     python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer gaussian_copula
 
-    # TSTR with DP synthetic data — --mode best must be run before --mode test
+    # TSTR (DP)
     python -m src.modeling.classify --mode default --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0
-    python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0 --params best_logistic_regression_dpctgan_eps_1.0.yaml
+    python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0 --params best_logistic_regression_real.yaml
     python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0
 """
 
@@ -531,6 +529,7 @@ def train_and_evaluate(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="utility"
     ) as logger:
         set_random_seeds(current_seed)
 
@@ -660,6 +659,8 @@ def evaluate_on_test(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="utility"
+        
     ) as logger:
         logger.log(compute_metrics(y_test, model.predict(X_test), prefix="test"))
 
