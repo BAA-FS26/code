@@ -1,5 +1,5 @@
 """
-data_pipeline.py
+data_splitting.py
 
 Generic data pipeline utilities for tabular classification datasets.
 
@@ -10,7 +10,7 @@ the dataset adapter module — see src.dataset.adult_census.py for the
 Adult Census Income implementation.
 
 Usage:
-    from src.dataset.data_pipeline import split_data, verify_stratification
+    from src.dataset.data_splitting import split_data, verify_stratification
 """
 
 from pathlib import Path

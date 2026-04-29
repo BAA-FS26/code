@@ -95,12 +95,28 @@ CLEANED_REQUIRED_COLS = set(NUMERICAL_COLS + CATEGORICAL_COLS + [TARGET_COL])
 #            information as an ordinal integer.
 _COLS_TO_DROP = ["fnlwgt", "education"]
 
+_RAW_DIRNAME = "raw"
+_CLEANED_DIRNAME = "cleaned"
 _RAW_FILENAME = "adult_raw.csv"
 _CLEANED_FILENAME = "adult_cleaned.csv"
 _EDUCATION_MAP_FILENAME = "education_map.json"
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
+
+
+def _resolve_dataset_dirs(base_dir: Union[str, Path]) -> tuple[Path, Path]:
+    """
+    Resolve canonical raw and cleaned directories below the dataset base dir.
+
+    Args:
+        base_dir: Base data directory, usually DATA_DIR.
+
+    Returns:
+        Tuple of (raw_dir, cleaned_dir).
+    """
+    base_path = Path(base_dir)
+    return base_path / _RAW_DIRNAME, base_path / _CLEANED_DIRNAME
 
 
 def _normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -240,8 +256,8 @@ def download(output_dir: Union[str, Path]) -> pd.DataFrame:
         ValueError: If the downloaded dataset does not match the expected
                     Adult schema.
     """
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = Path(output_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
 
     print(
         "[adult_census] Downloading Adult Census Income dataset from UCI ML Repository..."
@@ -273,7 +289,7 @@ def download(output_dir: Union[str, Path]) -> pd.DataFrame:
     combined = pd.concat([features, targets], axis=1).reset_index(drop=True)
     _validate_raw_schema(combined)
 
-    raw_path = out_dir / _RAW_FILENAME
+    raw_path = raw_dir / _RAW_FILENAME
     combined.to_csv(raw_path, index=False)
     print(
         f"[adult_census] Raw data saved to {raw_path.resolve()} ({len(combined)} rows)"
@@ -287,7 +303,8 @@ def download(output_dir: Union[str, Path]) -> pd.DataFrame:
 
 def clean(
     data: pd.DataFrame,
-    output_dir: Union[str, Path],
+    cleaned_dir: Union[str, Path],
+    raw_dir: Union[str, Path] | None = None,
 ) -> pd.DataFrame:
     """
     Clean the raw Adult Census Income DataFrame and save the result.
@@ -320,8 +337,11 @@ def clean(
     if not isinstance(data, pd.DataFrame):
         raise TypeError(f"Expected pandas DataFrame, got {type(data).__name__}")
 
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    cleaned_path_dir = Path(cleaned_dir)
+    cleaned_path_dir.mkdir(parents=True, exist_ok=True)
+
+    education_map_dir = Path(raw_dir) if raw_dir is not None else cleaned_path_dir
+    education_map_dir.mkdir(parents=True, exist_ok=True)
 
     normalized = _normalize_column_names(data)
     _validate_raw_schema(normalized)
@@ -334,7 +354,7 @@ def clean(
         )
     )
 
-    _save_education_map(df, out_dir)
+    _save_education_map(df, education_map_dir)
 
     df = df.drop(columns=_COLS_TO_DROP)
     df = _normalize_cleaned_dtypes(df)
@@ -342,7 +362,7 @@ def clean(
 
     _validate_cleaned_schema(df)
 
-    out_path = out_dir / _CLEANED_FILENAME
+    out_path = cleaned_path_dir / _CLEANED_FILENAME
     df.to_csv(out_path, index=False)
     print(f"[adult_census] Cleaned data saved to {out_path.resolve()} ({len(df)} rows)")
 
@@ -358,23 +378,25 @@ def load_cleaned(output_dir: Union[str, Path]) -> pd.DataFrame:
     if it is not already present.
 
     This is the recommended entry point for the dataset pipeline. It is safe
-    to call repeatedly — download and cleaning are skipped when
-    adult_cleaned.csv already exists in output_dir.
+    to call repeatedly. The canonical layout is:
+
+        data/raw/adult_raw.csv
+        data/raw/education_map.json
+        data/cleaned/adult_cleaned.csv
 
     Args:
-        output_dir: Directory to check for adult_cleaned.csv and to save
-                    it to if it needs to be created.
+        output_dir: Base data directory, usually DATA_DIR.
 
     Returns:
         Cleaned Adult Census DataFrame ready for splitting.
     """
-    out_dir = Path(output_dir)
-    cleaned_path = out_dir / _CLEANED_FILENAME
+    raw_dir, cleaned_dir = _resolve_dataset_dirs(output_dir)
+    cleaned_path = cleaned_dir / _CLEANED_FILENAME
 
     if cleaned_path.exists():
         print(f"[adult_census] Found existing cleaned data at {cleaned_path.resolve()}")
         return pd.read_csv(cleaned_path)
 
     print("[adult_census] Cleaned data not found — downloading from UCI repository...")
-    raw_df = download(out_dir)
-    return clean(raw_df, out_dir)
+    raw_df = download(raw_dir)
+    return clean(raw_df, cleaned_dir=cleaned_dir, raw_dir=raw_dir)
