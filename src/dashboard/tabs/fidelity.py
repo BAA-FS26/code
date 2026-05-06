@@ -1,150 +1,117 @@
-"""
+"""Fidelity tab rendering."""
 
-fidelity.py
-
-"""
+from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
 
+from src.dashboard.charts import dp_metric_grid, grouped_metric_bars, to_percent
 from src.dashboard.loader import (
-    dedup_latest,
+    Result,
     epsilon_of,
-    get_color,
+    filter_results,
+    latest_by,
+    result_key,
     source_label,
+    summary,
     synthesizer_key,
 )
+from src.utility.constants import DP_SYNTHESIZERS
+
+FIDELITY_METRICS = ["Column shapes", "Column-pair trends", "Quality overall"]
+FIDELITY_KEYS = {
+    "Quality overall": "quality_overall",
+    "Column shapes": "quality_column_shapes",
+    "Column-pair trends": "quality_column_pair_trends",
+    "Diagnostic overall": "diagnostic_overall",
+    "Data validity": "diagnostic_data_validity",
+    "Data structure": "diagnostic_data_structure",
+}
 
 
-def tab_fidelity(records: list[dict], sel_synths: set, sel_eps: set):
+def render_fidelity_tab(
+    records: list[Result], selected_synths: set[str], selected_epsilons: set[float]
+) -> None:
+    """Render thesis-style fidelity charts and table."""
     st.markdown(
-        "**Fidelity:** How faithfully does the synthetic data reproduce the "
-        "statistical properties of the real data? Measured via SDV quality and diagnostic scores."
+        "**Fidelity:** How faithfully does the synthetic data reproduce the statistical "
+        "properties of the real data? Measured via SDV quality and diagnostic scores."
     )
 
-    filtered = [
-        r
-        for r in records
-        if synthesizer_key(r) in sel_synths
-        and (epsilon_of(r) is None or epsilon_of(r) in sel_eps)
-    ]
-    filtered = dedup_latest(filtered, lambda r: (synthesizer_key(r), epsilon_of(r)))
-
+    filtered = latest_by(
+        filter_results(records, selected_synths, selected_epsilons), result_key
+    )
     if not filtered:
         st.info("No fidelity results match the current filter.")
         return
 
-    rows = []
-    for r in sorted(filtered, key=lambda r: (synthesizer_key(r), epsilon_of(r) or 0)):
-        s = synthesizer_key(r)
-        e = epsilon_of(r)
-        summ = r.get("results", {}).get("summary", {})
-        rows.append(
-            {
-                "Source": source_label(s, e),
-                "Quality overall": summ.get("quality_overall"),
-                "Column shapes": summ.get("quality_column_shapes"),
-                "Column-pair trends": summ.get("quality_column_pair_trends"),
-                "Diagnostic overall": summ.get("diagnostic_overall"),
-                "Data validity": summ.get("diagnostic_data_validity"),
-                "Data structure": summ.get("diagnostic_data_structure"),
-                "_color": get_color(s, e),
-            }
+    df = pd.DataFrame(build_fidelity_rows(filtered))
+    dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
+    non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
+
+    if not dp_df.empty:
+        st.plotly_chart(
+            dp_metric_grid(
+                df,
+                metrics=FIDELITY_METRICS,
+                titles=[
+                    "Spaltenverteilungen",
+                    "Zusammenhänge zwischen Spalten",
+                    "Gesamtqualität",
+                ],
+                title="Fidelity der DP-Synthesizer in Abhängigkeit von ε",
+                dp_synths=set(DP_SYNTHESIZERS),
+                baseline_synths=set(non_dp_df["Synthesizer"]),
+                y_title="Score (%)",
+                y_range=[0, 100],
+                cols=3,
+                height=500,
+            ),
+            use_container_width=True,
         )
-    df = pd.DataFrame(rows)
 
-    quality_cols = ["Quality overall", "Column shapes", "Column-pair trends"]
-    diag_cols = ["Diagnostic overall", "Data validity", "Data structure"]
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        fig_q = go.Figure()
-        for _, row in df.iterrows():
-            fig_q.add_trace(
-                go.Bar(
-                    name=row["Source"],
-                    x=quality_cols,
-                    y=[row[c] for c in quality_cols],
-                    marker_color=row["_color"],
-                    text=[
-                        f"{row[c]:.3f}" if row[c] is not None else "—"
-                        for c in quality_cols
-                    ],
-                    textposition="outside",
-                )
-            )
-        fig_q.update_layout(
-            title="SDV quality scores (↑ better)",
-            barmode="group",
-            yaxis=dict(range=[0, 1.1], tickformat=".2f"),
-            legend=dict(orientation="h", y=-0.3),
-            height=430,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(t=50, b=100),
+    if not non_dp_df.empty:
+        st.plotly_chart(
+            grouped_metric_bars(
+                non_dp_df,
+                metrics=FIDELITY_METRICS,
+                metric_labels=[
+                    "Spaltenverteilungen",
+                    "Zusammenhänge zwischen Spalten",
+                    "Gesamtqualität",
+                ],
+                title="Fidelity von SDV Synthesizern",
+                y_title="Score (%)",
+                y_range=[0, 120],
+                reference_line=100,
+            ),
+            use_container_width=True,
         )
-        fig_q.update_yaxes(gridcolor="#E5E7EB")
-        st.plotly_chart(fig_q, use_container_width=True)
 
-    with col2:
-        fig_d = go.Figure()
-        for _, row in df.iterrows():
-            fig_d.add_trace(
-                go.Bar(
-                    name=row["Source"],
-                    x=diag_cols,
-                    y=[row[c] for c in diag_cols],
-                    marker_color=row["_color"],
-                    text=[
-                        f"{row[c]:.3f}" if row[c] is not None else "—"
-                        for c in diag_cols
-                    ],
-                    textposition="outside",
-                )
-            )
-        fig_d.update_layout(
-            title="SDV diagnostic scores (↑ better)",
-            barmode="group",
-            yaxis=dict(range=[0, 1.1], tickformat=".2f"),
-            legend=dict(orientation="h", y=-0.3),
-            height=430,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(t=50, b=100),
-        )
-        fig_d.update_yaxes(gridcolor="#E5E7EB")
-        st.plotly_chart(fig_d, use_container_width=True)
+    render_raw_table(df)
 
-    # ── Radar chart — quality profile per synthesizer
-    st.markdown("#### Quality profile (radar)")
-    all_dims = quality_cols + diag_cols
-    fig_r = go.Figure()
-    for _, row in df.iterrows():
-        vals = [row[d] for d in all_dims]
-        if any(v is not None for v in vals):
-            cleaned = [v if v is not None else 0 for v in vals]
-            fig_r.add_trace(
-                go.Scatterpolar(
-                    r=cleaned + [cleaned[0]],
-                    theta=all_dims + [all_dims[0]],
-                    fill="toself",
-                    name=row["Source"],
-                    marker_color=row["_color"],
-                    opacity=0.7,
-                )
-            )
-    fig_r.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-        showlegend=True,
-        height=450,
-        title="Fidelity radar — all dimensions",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_r, use_container_width=True)
 
+def build_fidelity_rows(records: list[Result]) -> list[dict]:
+    """Transform fidelity result records into dataframe rows in percent units."""
+    rows: list[dict] = []
+    for record in sorted(
+        records, key=lambda item: (synthesizer_key(item), epsilon_of(item) or 0)
+    ):
+        synth = synthesizer_key(record)
+        epsilon = epsilon_of(record)
+        metrics = summary(record)
+        row = {
+            "Source": source_label(synth, epsilon),
+            "Synthesizer": synth,
+            "Epsilon": epsilon,
+        }
+        for label, key in FIDELITY_KEYS.items():
+            row[label] = to_percent(metrics.get(key))
+        rows.append(row)
+    return rows
+
+
+def render_raw_table(df: pd.DataFrame) -> None:
+    """Render fidelity raw metrics table."""
     with st.expander("📄 Raw numbers"):
-        display = [c for c in df.columns if not c.startswith("_")]
-        st.dataframe(df[display], use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)

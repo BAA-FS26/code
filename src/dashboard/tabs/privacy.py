@@ -1,192 +1,217 @@
-"""
+"""Privacy tab rendering."""
 
-privacy.py
-
-
-"""
+from __future__ import annotations
 
 import pandas as pd
-import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
+import streamlit as st
 
-from src.dashboard.charts import risk_bar_with_ci
+from src.dashboard.charts import (
+    apply_common_layout,
+    dp_metric_grid,
+    grouped_metric_bars,
+    heatmap,
+    to_percent,
+)
 from src.dashboard.loader import (
-    dedup_latest,
+    Result,
     epsilon_of,
-    get_color,
+    filter_results,
+    latest_by,
+    result_key,
     source_label,
+    summary,
     synthesizer_key,
 )
+from src.utility.constants import DP_SYNTHESIZERS
+
+PRIVACY_METRICS = [
+    "Singling Out (multivariat)",
+    "Inference (income)",
+    "Inference (occupation)",
+    "Inference (sex)",
+    "Inference (relationship)",
+]
+PRIVACY_KEYS = {
+    "Singling Out (univariat)": "singling_out_risk_univariate",
+    "Singling Out (multivariat)": "singling_out_risk_multivariate",
+    "Linkability": "linkability_risk",
+    "Inference (income)": "inference_risk_income",
+    "Inference (occupation)": "inference_risk_occupation",
+    "Inference (sex)": "inference_risk_sex",
+    "Inference (relationship)": "inference_risk_relationship",
+}
+DCR_KEYS = {
+    "DCR-Baseline-Protection": "dcr_baseline_protection",
+    "DCR-Overfitting-Protection": "dcr_overfitting_protection",
+}
 
 
-def tab_privacy(records: list[dict], sel_synths: set, sel_eps: set):
+def render_privacy_tab(
+    records: list[Result], selected_synths: set[str], selected_epsilons: set[float]
+) -> None:
+    """Render thesis-style privacy charts."""
     st.markdown(
         "**FF2 — Privacy:** Re-identification and inference risks measured via "
         "Anonymeter (singling-out, linkability, inference) and DCR analysis."
     )
 
-    filtered = [
-        r
-        for r in records
-        if synthesizer_key(r) in sel_synths
-        and (epsilon_of(r) is None or epsilon_of(r) in sel_eps)
-    ]
-    filtered = dedup_latest(filtered, lambda r: (synthesizer_key(r), epsilon_of(r)))
-
+    filtered = latest_by(
+        filter_results(records, selected_synths, selected_epsilons), result_key
+    )
     if not filtered:
         st.info("No privacy results match the current filter.")
         return
 
-    # ── Singling-out risk
-    st.markdown("#### Singling-out risk")
-    labels, uni_vals, uni_lo, uni_hi = [], [], [], []
-    multi_vals, multi_lo, multi_hi = [], [], []
-    bar_colors = []
+    df = pd.DataFrame(build_privacy_rows(filtered))
+    dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
+    non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
 
-    for r in sorted(filtered, key=lambda r: (synthesizer_key(r), epsilon_of(r) or 0)):
-        s = synthesizer_key(r)
-        e = epsilon_of(r)
-        summ = r.get("results", {}).get("summary", {})
-        labels.append(source_label(s, e))
-        uni_vals.append(summ.get("singling_out_risk_univariate", 0))
-        uni_lo.append(summ.get("singling_out_risk_univariate_ci_lower", 0))
-        uni_hi.append(summ.get("singling_out_risk_univariate_ci_upper", 0))
-        multi_vals.append(summ.get("singling_out_risk_multivariate", 0))
-        multi_lo.append(summ.get("singling_out_risk_multivariate_ci_lower", 0))
-        multi_hi.append(summ.get("singling_out_risk_multivariate_ci_upper", 0))
-        bar_colors.append(get_color(s, e))
-
-    col1, col2 = st.columns(2)
-    with col1:
+    if not dp_df.empty:
         st.plotly_chart(
-            risk_bar_with_ci(
-                labels,
-                uni_vals,
-                uni_lo,
-                uni_hi,
-                bar_colors,
-                "Univariate singling-out risk (↓ better)",
-            ),
-            use_container_width=True,
-        )
-    with col2:
-        st.plotly_chart(
-            risk_bar_with_ci(
-                labels,
-                multi_vals,
-                multi_lo,
-                multi_hi,
-                bar_colors,
-                "Multivariate singling-out risk (↓ better)",
+            dp_metric_grid(
+                df,
+                metrics=PRIVACY_METRICS,
+                titles=PRIVACY_METRICS,
+                title="Anonymeter-Risiken der DP-Synthesizer",
+                dp_synths=set(DP_SYNTHESIZERS),
+                baseline_synths=set(non_dp_df["Synthesizer"]),
+                y_title="Risiko (%)",
+                y_range=[
+                    -0.5,
+                    max(8, df[PRIVACY_METRICS].max(numeric_only=True).max() * 1.15),
+                ],
+                cols=3,
+                height=720,
             ),
             use_container_width=True,
         )
 
-    # ── Linkability + DCR
-    st.markdown("#### Linkability risk & DCR")
-    link_vals, link_lo, link_hi = [], [], []
-    dcr_base, dcr_overfit = [], []
+        render_dp_dcr(df, non_dp_df)
 
-    for r in sorted(filtered, key=lambda r: (synthesizer_key(r), epsilon_of(r) or 0)):
-        summ = r.get("results", {}).get("summary", {})
-        link_vals.append(summ.get("linkability_risk", 0))
-        link_lo.append(summ.get("linkability_risk_ci_lower", 0))
-        link_hi.append(summ.get("linkability_risk_ci_upper", 0))
-        dcr_base.append(summ.get("dcr_baseline_protection", 0))
-        dcr_overfit.append(summ.get("dcr_overfitting_protection", 0))
+    if not non_dp_df.empty:
+        render_non_dp_heatmap(non_dp_df)
+        render_non_dp_dcr(non_dp_df)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        st.plotly_chart(
-            risk_bar_with_ci(
-                labels,
-                link_vals,
-                link_lo,
-                link_hi,
-                bar_colors,
-                "Linkability risk (↓ better)",
-            ),
-            use_container_width=True,
-        )
-    with col4:
-        fig_dcr = go.Figure()
-        fig_dcr.add_trace(
-            go.Bar(
-                name="DCR baseline protection",
-                x=labels,
-                y=dcr_base,
-                marker_color=bar_colors,
-                text=[f"{v:.3f}" for v in dcr_base],
-                textposition="outside",
+    render_raw_table(df)
+
+
+def build_privacy_rows(records: list[Result]) -> list[dict]:
+    """Transform privacy result records into dataframe rows in percent units."""
+    rows: list[dict] = []
+    for record in sorted(
+        records, key=lambda item: (synthesizer_key(item), epsilon_of(item) or 0)
+    ):
+        synth = synthesizer_key(record)
+        epsilon = epsilon_of(record)
+        metrics = summary(record)
+        row = {
+            "Source": source_label(synth, epsilon),
+            "Synthesizer": synth,
+            "Epsilon": epsilon,
+        }
+        for label, key in PRIVACY_KEYS.items():
+            row[label] = to_percent(metrics.get(key))
+        for label, key in DCR_KEYS.items():
+            row[label] = to_percent(metrics.get(key))
+        rows.append(row)
+    return rows
+
+
+def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
+    """Render DCR protection over epsilon with dashed baseline references."""
+    dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()].dropna(
+        subset=["DCR-Baseline-Protection"]
+    )
+    if dp_df.empty:
+        return
+
+    fig = go.Figure()
+    legend_seen: set[str] = set()
+    for synth, group in dp_df.groupby("Synthesizer"):
+        group = group.sort_values("Epsilon")
+        label = source_label(str(synth), None)
+        fig.add_trace(
+            go.Scatter(
+                x=group["Epsilon"],
+                y=group["DCR-Baseline-Protection"],
+                mode="lines+markers",
+                name=label,
+                marker=dict(size=9),
+                line=dict(width=3),
+                showlegend=label not in legend_seen,
             )
         )
-        fig_dcr.add_trace(
-            go.Bar(
-                name="DCR overfitting protection",
-                x=labels,
-                y=dcr_overfit,
-                marker_color=bar_colors,
-                opacity=0.5,
-                text=[f"{v:.3f}" for v in dcr_overfit],
-                textposition="outside",
-            )
-        )
-        fig_dcr.update_layout(
-            title="DCR protection scores (↑ better)",
-            barmode="group",
-            yaxis=dict(range=[0, 1.1], tickformat=".2f"),
-            legend=dict(orientation="h", y=-0.3),
-            height=400,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(t=50, b=80),
-        )
-        fig_dcr.update_yaxes(gridcolor="#E5E7EB")
-        st.plotly_chart(fig_dcr, use_container_width=True)
+        legend_seen.add(label)
 
-    # ── Inference risk per sensitive column
-    st.markdown("#### Inference risk — sensitive columns")
-    sensitive = ["income", "occupation", "sex", "relationship"]
-    inf_data = []
-    for r in sorted(filtered, key=lambda r: (synthesizer_key(r), epsilon_of(r) or 0)):
-        s = synthesizer_key(r)
-        e = epsilon_of(r)
-        summ = r.get("results", {}).get("summary", {})
-        for col in sensitive:
-            val = summ.get(f"inference_risk_{col}", None)
-            lo = summ.get(f"inference_risk_{col}_ci_lower", None)
-            hi = summ.get(f"inference_risk_{col}_ci_upper", None)
-            if val is not None:
-                inf_data.append(
+    for _, baseline in non_dp_df.dropna(subset=["DCR-Baseline-Protection"]).iterrows():
+        fig.add_hline(
+            y=float(baseline["DCR-Baseline-Protection"]),
+            line_dash="dash",
+            line_width=2,
+            annotation_text=source_label(str(baseline["Synthesizer"]), None),
+            annotation_position="right",
+        )
+
+    fig.update_xaxes(title_text="Privacy-Budget ε", type="log")
+    fig.update_yaxes(title_text="DCR-Baseline-Protection (%)")
+    st.plotly_chart(
+        apply_common_layout(
+            fig, title="DCR-Schutzwerte der DP-Synthesizer", height=520
+        ),
+        use_container_width=True,
+    )
+
+
+def render_non_dp_heatmap(non_dp_df: pd.DataFrame) -> None:
+    """Render non-DP Anonymeter risks as a compact heatmap."""
+    rows: list[dict] = []
+    for _, row in non_dp_df.iterrows():
+        for metric in PRIVACY_METRICS:
+            if pd.notna(row.get(metric)):
+                rows.append(
                     {
-                        "Source": source_label(s, e),
-                        "Column": col,
-                        "Risk": val,
-                        "CI lower": lo,
-                        "CI upper": hi,
-                        "_color": get_color(s, e),
+                        "Synthesizer": row["Source"],
+                        "Metric": metric,
+                        "Risiko": row[metric],
                     }
                 )
-    if inf_data:
-        df_inf = pd.DataFrame(inf_data)
-        fig_inf = px.bar(
-            df_inf,
-            x="Column",
-            y="Risk",
-            color="Source",
-            barmode="group",
-            error_y=df_inf["CI upper"] - df_inf["Risk"],
-            error_y_minus=df_inf["Risk"] - df_inf["CI lower"],
-            title="Inference risk per sensitive column (↓ better)",
-            range_y=[0, max(df_inf["CI upper"].max() * 1.2, 0.05)],
-        )
-        fig_inf.update_layout(
-            height=420,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", y=-0.3),
-            margin=dict(t=50, b=100),
-        )
-        fig_inf.update_yaxes(gridcolor="#E5E7EB", tickformat=".3f")
-        st.plotly_chart(fig_inf, use_container_width=True)
+    if not rows:
+        return
+    st.plotly_chart(
+        heatmap(
+            pd.DataFrame(rows),
+            x="Synthesizer",
+            y="Metric",
+            z="Risiko",
+            title="Anonymeter-Risiken der SDV Synthesizer",
+            colorbar_title="Risiko (%)",
+            zmin=0,
+            zmax=max(10, max(item["Risiko"] for item in rows)),
+        ),
+        use_container_width=True,
+    )
+
+
+def render_non_dp_dcr(non_dp_df: pd.DataFrame) -> None:
+    """Render non-DP DCR protection as a thesis-style bar chart."""
+    dcr_df = non_dp_df.dropna(subset=["DCR-Baseline-Protection"])
+    if dcr_df.empty:
+        return
+    st.plotly_chart(
+        grouped_metric_bars(
+            dcr_df,
+            metrics=["DCR-Baseline-Protection"],
+            metric_labels=["DCR-Baseline-Protection"],
+            title="DCR-Schutzwerte der SDV Synthesizer",
+            y_title="DCR-Baseline-Protection (%)",
+            y_range=[0, max(80, float(dcr_df["DCR-Baseline-Protection"].max()) * 1.25)],
+        ),
+        use_container_width=True,
+    )
+
+
+def render_raw_table(df: pd.DataFrame) -> None:
+    """Render privacy raw metrics table."""
+    with st.expander("📄 Raw numbers"):
+        st.dataframe(df, use_container_width=True, hide_index=True)
