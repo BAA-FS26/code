@@ -48,9 +48,9 @@ WANDB_PROJECT = "synthetic-data-eval"
 
 # ── Experiment choices (fixed project scope) ─────────────────────────────────
 
-SYNTHESIZERS = ["gaussian_copula", "ctgan", "tvae"]
+SYNTHESIZERS = {"gaussian_copula", "ctgan", "tvae"}
 
-DP_SYNTHESIZERS = ["dpctgan", "patectgan"]
+DP_SYNTHESIZERS = {"dpctgan", "patectgan"}
 
 # Epsilon values following a logarithmic scale spanning the range commonly
 # used in DP literature. epsilon=0.1 represents a strong privacy guarantee,
