@@ -43,7 +43,7 @@ def main() -> None:
     selected_synths, selected_epsilons = render_sidebar(all_results)
 
     render_header()
-    tradeoff_tab, utility_tab, privacy_tab, fidelity_tab = st.tabs(TAB_TITLES)
+    fidelity_tab, utility_tab, privacy_tab, tradeoff_tab = st.tabs(TAB_TITLES)
     
     with utility_tab:
         render_utility_tab(all_results["utility"], selected_synths, selected_epsilons)
