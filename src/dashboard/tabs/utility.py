@@ -148,7 +148,7 @@ def render_dp_utility(df: pd.DataFrame) -> None:
                 row=1,  # type: ignore
                 col=col,  # type: ignore
             )
-            label = "Realdaten-Baseline" if synth == "real" else synth_label(synth)
+            label = "Real Data Baseline" if synth == "real" else synth_label(synth)
             fig.add_trace(
                 go.Scatter(
                     x=[None],
@@ -163,9 +163,9 @@ def render_dp_utility(df: pd.DataFrame) -> None:
             )
             legend_seen.add(label)
 
-        fig.update_xaxes(title_text="Privacy-Budget ε", type="log", row=1, col=col)
+        fig.update_xaxes(title_text="Privacy Budget ε", type="log", row=1, col=col)
         fig.update_yaxes(
-            title_text="Makro-F1-Score (%)" if col == 1 else None,
+            title_text="Macro F1 Score (%)" if col == 1 else None,
             range=[0, 100],
             row=1,
             col=col,
@@ -174,7 +174,7 @@ def render_dp_utility(df: pd.DataFrame) -> None:
     st.plotly_chart(
         apply_common_layout(
             fig,
-            title="Utility der DP-Synthesizer im Vergleich zu CTGAN und Realdaten",
+            title="Utility of DP Synthesizers compared to CTGAN and Real Data",
             height=500,
             bottom_margin=70,
         ),
@@ -279,7 +279,7 @@ def render_utility_loss_lollipop(df: pd.DataFrame) -> None:
             x=[None],
             y=[None],
             mode="lines",
-            name="Baseline Realdaten",
+            name="Real Data Baseline",
             line=dict(color="black", width=3, dash="dash"),
         )
     )
@@ -288,10 +288,8 @@ def render_utility_loss_lollipop(df: pd.DataFrame) -> None:
         tickvals=list(x_positions.values()),
         ticktext=[CLASSIFIER_LABELS.get(c, c) for c in classifiers],
     )
-    fig.update_yaxes(title_text="Makro-F1-Score (%)", range=[0, 100])
-    title = "Utility-Loss: Abstand zur Realwelt-Baseline"
-    if selected_epsilon is not None:
-        title += f" inkl. DP-Synthesizer bei ε={selected_epsilon:g}"
+    fig.update_yaxes(title_text="Macro F1 Score (%)", range=[0, 100])
+    title = "Utility-Loss: Distance from the real-data baseline"    
     st.plotly_chart(
         apply_common_layout(fig, title=title, height=560, bottom_margin=95),
         use_container_width=True,
@@ -307,7 +305,7 @@ def select_lollipop_epsilon(dp_df: pd.DataFrame) -> float | None:
     show_dp = st.checkbox(
         "Show DP variants in utility-loss chart",
         value=True,
-        help="Adds DP synthesizer results for one selected ε to avoid overcrowding the lollipop plot.",
+        help="Adds DP synthesizer results for one selected ε.",
     )
     if not show_dp:
         return None
@@ -339,7 +337,7 @@ def synthesizer_offsets(synths: list[str]) -> dict[str, float]:
 
 def render_raw_table(df: pd.DataFrame) -> None:
     """Render utility raw metrics table."""
-    with st.expander("📄 Raw numbers"):
+    with st.expander("Raw numbers"):
         display_cols = [
             "Source",
             "Classifier",

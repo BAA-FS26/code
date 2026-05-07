@@ -41,7 +41,7 @@ def render_fidelity_tab(
     """Render thesis-style fidelity charts and table."""
     st.markdown(
         "**Fidelity:** How faithfully does the synthetic data reproduce the statistical "
-        "properties of the real data? Measured via SDV quality and diagnostic scores."
+        "properties of the real data? Measured via SDMetrics quality analysis"
     )
 
     filtered = select_runs(
@@ -58,41 +58,41 @@ def render_fidelity_tab(
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
     non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
 
-    if not dp_df.empty:
-        st.plotly_chart(
-            dp_metric_grid(
-                df,
-                metrics=FIDELITY_METRICS,
-                titles=[
-                    "Spaltenverteilungen",
-                    "Zusammenhänge zwischen Spalten",
-                    "Gesamtqualität",
-                ],
-                title="Fidelity der DP-Synthesizer in Abhängigkeit von ε",
-                dp_synths=set(DP_SYNTHESIZERS),
-                baseline_synths=set(non_dp_df["Synthesizer"]),
-                y_title="Score (%)",
-                y_range=[0, 100],
-                cols=3,
-                height=500,
-            ),
-            use_container_width=True,
-        )
-
     if not non_dp_df.empty:
         st.plotly_chart(
             grouped_metric_bars(
                 non_dp_df,
                 metrics=FIDELITY_METRICS,
                 metric_labels=[
-                    "Spaltenverteilungen",
-                    "Zusammenhänge zwischen Spalten",
-                    "Gesamtqualität",
+                    "Column shapes",
+                    "Column-pair trends",
+                    "Quality overall",
                 ],
                 title="Fidelity von SDV Synthesizern",
                 y_title="Score (%)",
                 y_range=[0, 120],
                 reference_line=100,
+            ),
+            use_container_width=True,
+        )
+
+    if not dp_df.empty:
+        st.plotly_chart(
+            dp_metric_grid(
+                df,
+                metrics=FIDELITY_METRICS,
+                titles=[
+                    "Column shapes",
+                    "Column-pair trends",
+                    "Quality overall",
+                ],
+                title="Fidelity of the DP synthesizer across ε",
+                dp_synths=set(DP_SYNTHESIZERS),
+                baseline_synths=set(non_dp_df["Synthesizer"]),
+                y_title="Score (%)",
+                y_range=[0, 100],
+                cols=3,
+                height=500,
             ),
             use_container_width=True,
         )
@@ -124,5 +124,5 @@ def build_fidelity_rows(records: list[Result]) -> list[dict]:
 
 def render_raw_table(df: pd.DataFrame) -> None:
     """Render fidelity raw metrics table."""
-    with st.expander("📄 Raw numbers"):
+    with st.expander("Raw numbers"):
         st.dataframe(df, use_container_width=True, hide_index=True)

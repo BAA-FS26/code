@@ -185,7 +185,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
 
 def render_summary_table(df: pd.DataFrame) -> None:
     """Render trade-off summary table."""
-    with st.expander("📄 Trade-off summary table"):
+    with st.expander("Trade-off summary table"):
         if df.empty:
             st.info("No trade-off rows are available for the current run selection.")
             return

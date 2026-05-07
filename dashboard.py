@@ -16,11 +16,11 @@ from src.dashboard.tabs.tradeoff import render_tradeoff_tab
 from src.dashboard.tabs.utility import render_utility_tab
 from src.utility.constants import RESULTS_DIR
 
-APP_TITLE = "Synthetic Data as PET — Evaluation Dashboard"
+APP_TITLE = "Evaluating Synthetic Data as PET"
 APP_CAPTION = (
-    "Bachelor's Thesis · HSLU · FS26 · " "Adult Census Income dataset · RANDOM_STATE=42"
+    "Bachelor Thesis · HSLU · FS26 · " "Adult Census Income dataset"
 )
-TAB_TITLES = ["Fidelity", "Utility", "Privacy", "Trade-off"]
+TAB_TITLES = ["Utility", "Privacy", "Trade-off", "Fidelity"]
 
 
 def configure_page() -> None:
@@ -45,7 +45,7 @@ def main() -> None:
     )
 
     render_header()
-    fidelity_tab, utility_tab, privacy_tab, tradeoff_tab = st.tabs(TAB_TITLES)
+    utility_tab, privacy_tab, tradeoff_tab, fidelity_tab = st.tabs(TAB_TITLES)
 
     with utility_tab:
         render_utility_tab(

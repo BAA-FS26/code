@@ -23,7 +23,7 @@ def render_sidebar(
     """Render sidebar controls and return selected filters and run mode."""
     st.sidebar.image("assets/HSLU_2022_log.png")
 
-    st.sidebar.markdown("## 🔬 Synthetic Data Evaluation")
+    st.sidebar.markdown("## Synthetic Data Evaluation")
     st.sidebar.markdown("BAA · HSLU · FS26")
     st.sidebar.markdown("---")
 
@@ -52,10 +52,13 @@ def collect_filter_values(all_results: ResultMap) -> tuple[set[str], set[float]]
 
 def render_synthesizer_filters(all_synths: set[str]) -> set[str]:
     """Render synthesizer checkboxes."""
-    selected: set[str] = set()
+    selected: set[str] = {"real"} if "real" in all_synths else set()
+
+    visible_synths = all_synths - {"real"}
+
     groups = [
-        ("Synthesizers", sorted(all_synths - DP_SYNTHESIZERS)),
-        ("DP Synthesizers", sorted(all_synths & DP_SYNTHESIZERS)),
+        ("Synthesizers", sorted(visible_synths - DP_SYNTHESIZERS)),
+        ("DP Synthesizers", sorted(visible_synths & DP_SYNTHESIZERS)),
     ]
 
     for heading, synths in groups:
@@ -67,6 +70,7 @@ def render_synthesizer_filters(all_synths: set[str]) -> set[str]:
                 SYNTHESIZER_LABELS.get(synth, synth), value=True, key=f"cb_{synth}"
             ):
                 selected.add(synth)
+
     return selected
 
 

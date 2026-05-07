@@ -28,15 +28,15 @@ from src.dashboard.loader import (
 from src.utility.constants import DP_SYNTHESIZERS
 
 PRIVACY_METRICS = [
-    "Singling Out (multivariat)",
+    "Singling Out (multivariate)",
     "Inference (income)",
     "Inference (occupation)",
     "Inference (sex)",
     "Inference (relationship)",
 ]
 PRIVACY_KEYS = {
-    "Singling Out (univariat)": "singling_out_risk_univariate",
-    "Singling Out (multivariat)": "singling_out_risk_multivariate",
+    "Singling Out (univariate)": "singling_out_risk_univariate",
+    "Singling Out (multivariate)": "singling_out_risk_multivariate",
     "Linkability": "linkability_risk",
     "Inference (income)": "inference_risk_income",
     "Inference (occupation)": "inference_risk_occupation",
@@ -59,7 +59,7 @@ def render_privacy_tab(
     """Render thesis-style privacy charts."""
     st.markdown(
         "**FF2 — Privacy:** Re-identification and inference risks measured via "
-        "Anonymeter (singling-out, linkability, inference) and DCR analysis."
+        "Anonymeter (singling-out, linkability, inference) and SDMetrics DCR analysis."
     )
 
     filtered = select_runs(
@@ -86,10 +86,10 @@ def render_privacy_tab(
                 df,
                 metrics=PRIVACY_METRICS,
                 titles=PRIVACY_METRICS,
-                title="Anonymeter-Risiken der DP-Synthesizer",
+                title="Anonymeter Risk Scores of DP Synthesizer across ε",
                 dp_synths=set(DP_SYNTHESIZERS),
                 baseline_synths=set(non_dp_df["Synthesizer"]),
-                y_title="Risiko (%)",
+                y_title="Risk (%)",
                 y_range=[
                     -0.5,
                     max(8, df[PRIVACY_METRICS].max(numeric_only=True).max() * 1.15),
@@ -168,7 +168,7 @@ def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
     fig.update_yaxes(title_text="DCR-Baseline-Protection (%)")
     st.plotly_chart(
         apply_common_layout(
-            fig, title="DCR-Schutzwerte der DP-Synthesizer", height=520
+            fig, title="DCR Baseline Protection of DP Synthesizer across ε", height=520
         ),
         use_container_width=True,
     )
@@ -184,7 +184,7 @@ def render_non_dp_heatmap(non_dp_df: pd.DataFrame) -> None:
                     {
                         "Synthesizer": row["Source"],
                         "Metric": metric,
-                        "Risiko": row[metric],
+                        "Risk": row[metric],
                     }
                 )
     if not rows:
@@ -194,11 +194,11 @@ def render_non_dp_heatmap(non_dp_df: pd.DataFrame) -> None:
             pd.DataFrame(rows),
             x="Synthesizer",
             y="Metric",
-            z="Risiko",
-            title="Anonymeter-Risiken der SDV Synthesizer",
+            z="Risk",
+            title="Anonymeter Risk Scores of SDV Synthesizer",
             colorbar_title="Risiko (%)",
             zmin=0,
-            zmax=max(10, max(item["Risiko"] for item in rows)),
+            zmax=max(10, max(item["Risk"] for item in rows)),
         ),
         use_container_width=True,
     )
@@ -214,7 +214,7 @@ def render_non_dp_dcr(non_dp_df: pd.DataFrame) -> None:
             dcr_df,
             metrics=["DCR-Baseline-Protection"],
             metric_labels=["DCR-Baseline-Protection"],
-            title="DCR-Schutzwerte der SDV Synthesizer",
+            title="DCR Baseline Protection of SDV Synthesizer",
             y_title="DCR-Baseline-Protection (%)",
             y_range=[0, max(80, float(dcr_df["DCR-Baseline-Protection"].max()) * 1.25)],
         ),
@@ -224,5 +224,5 @@ def render_non_dp_dcr(non_dp_df: pd.DataFrame) -> None:
 
 def render_raw_table(df: pd.DataFrame) -> None:
     """Render privacy raw metrics table."""
-    with st.expander("📄 Raw numbers"):
+    with st.expander("Raw numbers"):
         st.dataframe(df, use_container_width=True, hide_index=True)

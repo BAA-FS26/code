@@ -196,7 +196,7 @@ def grouped_metric_bars(
             line_dash="dash",
             line_color="#111827",
             line_width=2,
-            annotation_text=f"Referenz: {reference_line:g} %",
+            annotation_text=f"reference: {reference_line:g} %",
             annotation_position="top left",
         )
     fig.update_layout(barmode="group", yaxis=dict(title=y_title, range=y_range))
