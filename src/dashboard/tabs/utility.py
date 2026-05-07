@@ -22,6 +22,7 @@ from src.dashboard.loader import (
     run_date,
     run_timestamp,
     select_runs,
+    get_color,
     source_label,
     summary,
     synthesizer_key,
@@ -62,8 +63,8 @@ def render_utility_tab(
         st.info("Utility result files were found, but none contain F1 scores.")
         return
 
-    st.markdown("#### Non-DP utility loss")
-    render_non_dp_utility_loss(df)
+    st.markdown("#### Utility loss vs. real baseline")
+    render_utility_loss_lollipop(df)
 
     st.markdown("#### DP utility across ε")
     render_dp_utility(df)
@@ -100,7 +101,7 @@ def build_utility_rows(records: list[Result]) -> list[dict]:
 def render_dp_utility(df: pd.DataFrame) -> None:
     """Render classifier panels with DP epsilon curves and dashed baselines."""
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
-    baseline_df = df[df["Synthesizer"].isin({"real", "ctgan"}) & df["Epsilon"].isna()]
+    baseline_df = df[(~df["Synthesizer"].isin(DP_SYNTHESIZERS)) & df["Epsilon"].isna()]
     classifiers = [
         c for c in CLASSIFIER_ORDER if c in set(df["ClassifierKey"])
     ] or sorted(df["ClassifierKey"].unique())
@@ -181,47 +182,75 @@ def render_dp_utility(df: pd.DataFrame) -> None:
     )
 
 
-def render_non_dp_utility_loss(df: pd.DataFrame) -> None:
-    """Render thesis-style distance from real baseline for non-DP synthesizers."""
+def render_utility_loss_lollipop(df: pd.DataFrame) -> None:
+    """Render utility loss against the real baseline, with optional one-ε DP overlay."""
+    real = df[(df["Synthesizer"] == "real") & df["Epsilon"].isna()]
+    if real.empty:
+        st.info("Utility-loss chart requires real-data baseline results.")
+        return
+
     non_dp = df[
         (~df["Synthesizer"].isin(DP_SYNTHESIZERS))
         & (df["Synthesizer"] != "real")
         & df["Epsilon"].isna()
     ]
-    real = df[(df["Synthesizer"] == "real") & df["Epsilon"].isna()]
-    if non_dp.empty or real.empty:
+    dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
+
+    selected_epsilon = select_lollipop_epsilon(dp_df)
+    plot_df = non_dp.copy()
+    if selected_epsilon is not None:
+        plot_df = pd.concat(
+            [plot_df, dp_df[dp_df["Epsilon"] == selected_epsilon]],
+            ignore_index=True,
+        )
+
+    if plot_df.empty:
+        st.info("No synthetic utility results match the current filters.")
         return
 
     classifiers = [
         c for c in CLASSIFIER_ORDER if c in set(df["ClassifierKey"])
     ] or sorted(df["ClassifierKey"].unique())
     x_positions = {clf: i for i, clf in enumerate(classifiers)}
-    offsets = {"gaussian_copula": -0.2, "ctgan": 0.0, "tvae": 0.2}
+    offsets = synthesizer_offsets(sorted(plot_df["Synthesizer"].dropna().unique()))
 
     fig = go.Figure()
     legend_seen: set[str] = set()
     for clf in classifiers:
         x_center = x_positions[clf]
         real_score = real.loc[real["ClassifierKey"] == clf, "F1 (macro)"]
-        if not real_score.empty:
-            y = float(real_score.iloc[0])
-            fig.add_shape(
-                type="line",
-                x0=x_center - 0.3,
-                x1=x_center + 0.3,
-                y0=y,
-                y1=y,
-                line=dict(color="black", width=3, dash="dash"),
-            )
+        if real_score.empty:
+            continue
 
-        for synth, group in non_dp[non_dp["ClassifierKey"] == clf].groupby(
-            "Synthesizer"
-        ):
-            y = group["F1 (macro)"].iloc[0]
+        baseline = float(real_score.iloc[0])
+        fig.add_shape(
+            type="line",
+            x0=x_center - 0.36,
+            x1=x_center + 0.36,
+            y0=baseline,
+            y1=baseline,
+            line=dict(color="black", width=3, dash="dash"),
+        )
+
+        clf_rows = plot_df[plot_df["ClassifierKey"] == clf]
+        for _, row in clf_rows.sort_values(["Synthesizer", "Epsilon"]).iterrows():
+            y = row["F1 (macro)"]
             if pd.isna(y):
                 continue
-            x = x_center + offsets.get(str(synth), 0)
-            label = synth_label(str(synth))
+            synth = str(row["Synthesizer"])
+            epsilon = row["Epsilon"] if pd.notna(row["Epsilon"]) else None
+            x = x_center + offsets.get(synth, 0)
+            label = source_label(synth, float(epsilon) if epsilon is not None else None)
+            color = synth_color(synth)
+
+            fig.add_shape(
+                type="line",
+                x0=x,
+                x1=x,
+                y0=float(y),
+                y1=baseline,
+                line=dict(color=color, width=2),
+            )
             fig.add_trace(
                 go.Scatter(
                     x=[x],
@@ -230,22 +259,20 @@ def render_non_dp_utility_loss(df: pd.DataFrame) -> None:
                     name=label,
                     marker=dict(
                         size=17,
-                        color=synth_color(str(synth)),
+                        color=color,
                         line=dict(color="black", width=2),
+                    ),
+                    hovertemplate=(
+                        f"{label}<br>"
+                        f"{CLASSIFIER_LABELS.get(clf, clf)}<br>"
+                        "F1: %{y:.1f}%<br>"
+                        f"Loss vs real: {baseline - float(y):.1f} pp"
+                        "<extra></extra>"
                     ),
                     showlegend=label not in legend_seen,
                 )
             )
             legend_seen.add(label)
-            if not real_score.empty:
-                fig.add_shape(
-                    type="line",
-                    x0=x,
-                    x1=x,
-                    y0=float(y),
-                    y1=float(real_score.iloc[0]),
-                    line=dict(color=synth_color(str(synth)), width=2),
-                )
 
     fig.add_trace(
         go.Scatter(
@@ -262,15 +289,52 @@ def render_non_dp_utility_loss(df: pd.DataFrame) -> None:
         ticktext=[CLASSIFIER_LABELS.get(c, c) for c in classifiers],
     )
     fig.update_yaxes(title_text="Makro-F1-Score (%)", range=[0, 100])
+    title = "Utility-Loss: Abstand zur Realwelt-Baseline"
+    if selected_epsilon is not None:
+        title += f" inkl. DP-Synthesizer bei ε={selected_epsilon:g}"
     st.plotly_chart(
-        apply_common_layout(
-            fig,
-            title="Utility-Loss: Abstand zur Realwelt-Baseline",
-            height=520,
-            bottom_margin=90,
-        ),
+        apply_common_layout(fig, title=title, height=560, bottom_margin=95),
         use_container_width=True,
     )
+
+
+def select_lollipop_epsilon(dp_df: pd.DataFrame) -> float | None:
+    """Render a compact ε selector for the lollipop DP overlay."""
+    epsilons = sorted(float(eps) for eps in dp_df["Epsilon"].dropna().unique())
+    if not epsilons:
+        return None
+
+    show_dp = st.checkbox(
+        "Show DP variants in utility-loss chart",
+        value=True,
+        help="Adds DP synthesizer results for one selected ε to avoid overcrowding the lollipop plot.",
+    )
+    if not show_dp:
+        return None
+
+    slider_col, _ = st.columns([1, 4])
+
+    with slider_col:
+        return float(
+            st.select_slider(
+                "DP ε shown",
+                options=epsilons,
+                value=epsilons[0],
+                format_func=lambda value: f"ε = {value:g}",
+            )
+        )
+
+
+def synthesizer_offsets(synths: list[str]) -> dict[str, float]:
+    """Return centered x offsets for all synthesizers shown in a classifier group."""
+    if not synths:
+        return {}
+    if len(synths) == 1:
+        return {synths[0]: 0.0}
+    span = 0.52
+    step = span / (len(synths) - 1)
+    start = -span / 2
+    return {synth: start + idx * step for idx, synth in enumerate(synths)}
 
 
 def render_raw_table(df: pd.DataFrame) -> None:
