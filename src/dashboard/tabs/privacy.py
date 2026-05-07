@@ -76,6 +76,10 @@ def render_privacy_tab(
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
     non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
 
+    if not non_dp_df.empty:
+        render_non_dp_heatmap(non_dp_df)
+        render_non_dp_dcr(non_dp_df)
+
     if not dp_df.empty:
         st.plotly_chart(
             dp_metric_grid(
@@ -97,10 +101,6 @@ def render_privacy_tab(
         )
 
         render_dp_dcr(df, non_dp_df)
-
-    if not non_dp_df.empty:
-        render_non_dp_heatmap(non_dp_df)
-        render_non_dp_dcr(non_dp_df)
 
     render_raw_table(df)
 
