@@ -46,11 +46,20 @@ def render_tradeoff_tab(
         run_mode,
         selected_date,
     )
+    if df.empty or F1_COLUMN not in df.columns or RISK_COLUMN not in df.columns:
+        st.info(
+            "No trade-off rows match the current run selection. "
+            "This can happen when utility and privacy results were not run on the selected date."
+        )
+        render_summary_table(df)
+        return
+
     df_both = df.dropna(subset=[F1_COLUMN, RISK_COLUMN])
 
     if df_both.empty:
         st.warning(
-            "Not enough data for the trade-off plot. Ensure both privacy and utility results exist for the same synthesizers."
+            "Not enough paired data for the trade-off plot. "
+            "Utility and privacy results must exist for the same synthesizer/ε in the current run selection."
         )
     else:
         render_tradeoff_scatter(df_both)
@@ -99,9 +108,22 @@ def build_tradeoff_dataframe(
             risk_map[key] = float(risk)
 
     rows = []
+    all_keys = set(best_f1) | set(risk_map)
+    if not all_keys:
+        return pd.DataFrame(
+            columns=[
+                "Source",
+                "Synth",
+                "Epsilon",
+                "Run date",
+                F1_COLUMN,
+                RISK_COLUMN,
+                "_color",
+            ]
+        )
+
     for synth, epsilon, date in sorted(
-        set(best_f1) | set(risk_map),
-        key=lambda item: (item[0], item[1] or 0, item[2] or ""),
+        all_keys, key=lambda item: (item[0], item[1] or 0, item[2] or "")
     ):
         label = source_label(synth, epsilon)
         if date is not None:
@@ -165,11 +187,13 @@ def render_summary_table(df: pd.DataFrame) -> None:
     """Render trade-off summary table."""
     with st.expander("📄 Trade-off summary table"):
         if df.empty:
-            st.info("No trade-off rows are available.")
+            st.info("No trade-off rows are available for the current run selection.")
             return
         display_cols = [column for column in df.columns if not column.startswith("_")]
+        sort_cols = [F1_COLUMN] if F1_COLUMN in df.columns else display_cols[:1]
+        ascending = [False] if F1_COLUMN in df.columns else [True]
         st.dataframe(
-            df[display_cols].sort_values(F1_COLUMN, ascending=False),
+            df[display_cols].sort_values(sort_cols, ascending=ascending),
             use_container_width=True,
             hide_index=True,
         )

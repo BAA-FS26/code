@@ -11,6 +11,7 @@ from src.dashboard.loader import (
     RunMode,
     available_run_dates,
     epsilon_of,
+    run_date,
     synthesizer_key,
 )
 from src.utility.constants import DP_SYNTHESIZERS, RESULTS_DIR
@@ -97,6 +98,27 @@ def render_run_filters(all_results: ResultMap) -> tuple[RunMode, str | None]:
     if run_mode == "Specific date":
         if dates:
             selected_date = st.sidebar.selectbox("Run date", dates, index=0)
+            render_date_availability(all_results, selected_date)
         else:
             st.sidebar.info("No dated result folders found.")
     return run_mode, selected_date
+
+
+def render_date_availability(all_results: ResultMap, selected_date: str) -> None:
+    """Show which result categories have runs for the selected date."""
+    counts = {
+        category: sum(1 for record in records if run_date(record) == selected_date)
+        for category, records in all_results.items()
+    }
+    missing = [category for category, count in counts.items() if count == 0]
+    if not missing:
+        return
+
+    available = (
+        ", ".join(
+            f"{category}: {count}" for category, count in counts.items() if count > 0
+        )
+        or "none"
+    )
+    st.sidebar.caption(f"Available on {selected_date}: {available}")
+    st.sidebar.caption(f"No runs on this date: {', '.join(missing)}")
