@@ -19,7 +19,9 @@ from src.dashboard.loader import (
     classifier_key,
     epsilon_of,
     filter_results,
-    latest_by,
+    run_date,
+    run_timestamp,
+    select_runs,
     source_label,
     summary,
     synthesizer_key,
@@ -31,7 +33,11 @@ CLASSIFIER_ORDER = ["logistic_regression", "random_forest", "gradient_boosting"]
 
 
 def render_utility_tab(
-    records: list[Result], selected_synths: set[str], selected_epsilons: set[float]
+    records: list[Result],
+    selected_synths: set[str],
+    selected_epsilons: set[float],
+    run_mode: str,
+    selected_date: str | None,
 ) -> None:
     """Render thesis-style utility charts and tables."""
     st.markdown(
@@ -39,8 +45,11 @@ def render_utility_tab(
         "on real held-out test data? *(TSTR — Train on Synthetic, Test on Real)*"
     )
 
-    filtered = latest_by(
-        filter_results(records, selected_synths, selected_epsilons), utility_key
+    filtered = select_runs(
+        filter_results(records, selected_synths, selected_epsilons),
+        utility_key,
+        run_mode,  # type: ignore[arg-type]
+        selected_date,
     )
     if not filtered:
         st.info(
@@ -77,6 +86,8 @@ def build_utility_rows(records: list[Result]) -> list[dict]:
                 "Epsilon": epsilon,
                 "ClassifierKey": clf,
                 "Classifier": CLASSIFIER_LABELS.get(clf, clf),
+                "Run date": run_date(record),
+                "Timestamp": run_timestamp(record),
                 "Accuracy": to_percent(metrics.get("test_accuracy")),
                 "Precision": to_percent(metrics.get("test_precision_macro")),
                 "Recall": to_percent(metrics.get("test_recall_macro")),
@@ -268,6 +279,7 @@ def render_raw_table(df: pd.DataFrame) -> None:
         display_cols = [
             "Source",
             "Classifier",
+            "Run date",
             "Accuracy",
             "Precision",
             "Recall",

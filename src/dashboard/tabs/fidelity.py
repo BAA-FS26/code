@@ -10,8 +10,10 @@ from src.dashboard.loader import (
     Result,
     epsilon_of,
     filter_results,
-    latest_by,
     result_key,
+    run_date,
+    run_timestamp,
+    select_runs,
     source_label,
     summary,
     synthesizer_key,
@@ -30,7 +32,11 @@ FIDELITY_KEYS = {
 
 
 def render_fidelity_tab(
-    records: list[Result], selected_synths: set[str], selected_epsilons: set[float]
+    records: list[Result],
+    selected_synths: set[str],
+    selected_epsilons: set[float],
+    run_mode: str,
+    selected_date: str | None,
 ) -> None:
     """Render thesis-style fidelity charts and table."""
     st.markdown(
@@ -38,8 +44,11 @@ def render_fidelity_tab(
         "properties of the real data? Measured via SDV quality and diagnostic scores."
     )
 
-    filtered = latest_by(
-        filter_results(records, selected_synths, selected_epsilons), result_key
+    filtered = select_runs(
+        filter_results(records, selected_synths, selected_epsilons),
+        result_key,
+        run_mode,  # type: ignore[arg-type]
+        selected_date,
     )
     if not filtered:
         st.info("No fidelity results match the current filter.")
@@ -104,6 +113,8 @@ def build_fidelity_rows(records: list[Result]) -> list[dict]:
             "Source": source_label(synth, epsilon),
             "Synthesizer": synth,
             "Epsilon": epsilon,
+            "Run date": run_date(record),
+            "Timestamp": run_timestamp(record),
         }
         for label, key in FIDELITY_KEYS.items():
             row[label] = to_percent(metrics.get(key))

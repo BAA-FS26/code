@@ -40,17 +40,37 @@ def main() -> None:
     configure_page()
 
     all_results = load_all_results(RESULTS_DIR)
-    selected_synths, selected_epsilons = render_sidebar(all_results)
+    selected_synths, selected_epsilons, run_mode, selected_date = render_sidebar(
+        all_results
+    )
 
     render_header()
     fidelity_tab, utility_tab, privacy_tab, tradeoff_tab = st.tabs(TAB_TITLES)
-    
+
     with utility_tab:
-        render_utility_tab(all_results["utility"], selected_synths, selected_epsilons)
+        render_utility_tab(
+            all_results["utility"],
+            selected_synths,
+            selected_epsilons,
+            run_mode,
+            selected_date,
+        )
     with privacy_tab:
-        render_privacy_tab(all_results["privacy"], selected_synths, selected_epsilons)
+        render_privacy_tab(
+            all_results["privacy"],
+            selected_synths,
+            selected_epsilons,
+            run_mode,
+            selected_date,
+        )
     with fidelity_tab:
-        render_fidelity_tab(all_results["fidelity"], selected_synths, selected_epsilons)
+        render_fidelity_tab(
+            all_results["fidelity"],
+            selected_synths,
+            selected_epsilons,
+            run_mode,
+            selected_date,
+        )
 
     with tradeoff_tab:
         render_tradeoff_tab(
@@ -58,7 +78,10 @@ def main() -> None:
             all_results["privacy"],
             selected_synths,
             selected_epsilons,
+            run_mode,
+            selected_date,
         )
+
 
 if __name__ == "__main__":
     main()

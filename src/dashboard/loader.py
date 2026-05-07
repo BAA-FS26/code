@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import streamlit as st
 
@@ -21,17 +21,24 @@ from src.utility.constants import DP_SYNTHESIZERS
 
 LOGGER = logging.getLogger(__name__)
 RESULT_CATEGORIES = ("fidelity", "privacy", "utility")
+RUN_MODES = ("Latest only", "Specific date", "All runs")
 Result = dict[str, Any]
 ResultMap = dict[str, list[Result]]
 RecordKey = tuple[Any, ...]
+RunMode = Literal["Latest only", "Specific date", "All runs"]
 
 
 @st.cache_data(show_spinner=False)
 def load_all_results(results_dir: Path) -> ResultMap:
-    """Load all JSON result files grouped by category.
+    """Load JSON result files grouped by category.
 
-    Files are read from ``results/{category}/**/*.json`` and returned newest-first by
-    path order. Invalid JSON files are skipped and logged instead of silently ignored.
+    Expected layout::
+
+        results/{category}/{YYYY-MM-DD}/*.json
+
+    The loader still accepts deeper category subfolders via ``rglob``. Category,
+    synthesizer, epsilon, classifier, and timestamp are read from the JSON record
+    whenever possible, so dashboard behavior does not depend on filename parsing.
     """
     results: ResultMap = {category: [] for category in RESULT_CATEGORIES}
     if not results_dir.exists():
@@ -43,7 +50,7 @@ def load_all_results(results_dir: Path) -> ResultMap:
         if not category_dir.exists():
             continue
 
-        for json_file in sorted(category_dir.rglob("*.json"), reverse=True):
+        for json_file in category_dir.rglob("*.json"):
             try:
                 record = json.loads(json_file.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
@@ -53,11 +60,27 @@ def load_all_results(results_dir: Path) -> ResultMap:
                 LOGGER.warning("Could not read result file %s: %s", json_file, exc)
                 continue
 
-            if isinstance(record, dict):
-                record["_file"] = str(json_file)
-                results[category].append(record)
-            else:
+            if not isinstance(record, dict):
                 LOGGER.warning("Skipping non-object JSON result: %s", json_file)
+                continue
+
+            record_category = str(record.get("category") or category)
+            if record_category not in RESULT_CATEGORIES:
+                LOGGER.warning(
+                    "Skipping unknown result category %r in %s",
+                    record_category,
+                    json_file,
+                )
+                continue
+
+            record["_file"] = str(json_file)
+            record["_date_dir"] = json_file.parent.name
+            results[record_category].append(record)
+
+    for category in RESULT_CATEGORIES:
+        results[category].sort(
+            key=lambda record: str(record.get("timestamp", "")), reverse=True
+        )
 
     return results
 
@@ -72,13 +95,65 @@ def summary(record: Result) -> dict[str, Any]:
     return record.get("results", {}).get("summary", {}) or {}
 
 
-def synthesizer_key(record: Result) -> str:
-    """Return a canonical synthesizer identifier from a result record.
+def run_timestamp(record: Result) -> str:
+    """Return the result timestamp as stored in the JSON record."""
+    return str(record.get("timestamp", ""))
 
-    Some result files store DP runs in ``data_source`` values such as
-    ``dpctgan/eps_0.1`` instead of separate ``synthesizer`` and ``epsilon``
-    parameters.  For dashboard grouping we only want the model name here.
+
+def run_date(record: Result) -> str:
+    """Return the run date, preferring the date folder and falling back to timestamp."""
+    date_dir = str(record.get("_date_dir", ""))
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_dir):
+        return date_dir
+    timestamp = run_timestamp(record)
+    return timestamp[:10] if timestamp else "unknown"
+
+
+def available_run_dates(all_results: ResultMap) -> list[str]:
+    """Return available run dates newest-first."""
+    dates = {
+        run_date(record)
+        for records in all_results.values()
+        for record in records
+        if run_date(record) != "unknown"
+    }
+    return sorted(dates, reverse=True)
+
+
+def filter_by_run_date(
+    records: Iterable[Result], selected_date: str | None
+) -> list[Result]:
+    """Keep records from a selected run date."""
+    if not selected_date:
+        return list(records)
+    return [record for record in records if run_date(record) == selected_date]
+
+
+def select_runs(
+    records: Iterable[Result],
+    key_fn: Callable[[Result], RecordKey],
+    run_mode: RunMode,
+    selected_date: str | None,
+) -> list[Result]:
+    """Apply the user-selected run display mode.
+
+    ``Latest only`` keeps one newest record per logical configuration.
+    ``Specific date`` shows all records from the selected date, still deduplicated by
+    configuration in case the same experiment was rerun on that date.
+    ``All runs`` returns the records unchanged, newest-first.
     """
+    records_list = sorted(
+        list(records), key=lambda record: run_timestamp(record), reverse=True
+    )
+    if run_mode == "All runs":
+        return records_list
+    if run_mode == "Specific date":
+        return latest_by(filter_by_run_date(records_list, selected_date), key_fn)
+    return latest_by(records_list, key_fn)
+
+
+def synthesizer_key(record: Result) -> str:
+    """Return a canonical synthesizer identifier from a result record."""
     params = parameters(record)
     synth = params.get("synthesizer") or params.get("data_source") or "unknown"
     synth_key = str(synth).lower().strip().replace("\\", "/")
@@ -91,11 +166,7 @@ def classifier_key(record: Result) -> str:
 
 
 def epsilon_of(record: Result) -> float | None:
-    """Return epsilon as a float, or ``None`` for non-DP records.
-
-    Supports both explicit ``parameters.epsilon`` and encoded data-source paths
-    such as ``dpctgan/eps_0.1``.
-    """
+    """Return epsilon as a float, or ``None`` for non-DP records."""
     params = parameters(record)
     epsilon = params.get("epsilon")
     if epsilon not in (None, ""):
@@ -141,8 +212,8 @@ def latest_by(
     latest: dict[RecordKey, Result] = {}
     for record in records:
         key = key_fn(record)
-        timestamp = str(record.get("timestamp", ""))
-        if key not in latest or timestamp > str(latest[key].get("timestamp", "")):
+        timestamp = run_timestamp(record)
+        if key not in latest or timestamp > run_timestamp(latest[key]):
             latest[key] = record
     return list(latest.values())
 

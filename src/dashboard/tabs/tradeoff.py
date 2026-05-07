@@ -12,14 +12,14 @@ from src.dashboard.loader import (
     epsilon_of,
     filter_results,
     get_color,
-    latest_by,
     result_key,
+    run_date,
+    select_runs,
     source_label,
     summary,
     synthesizer_key,
     utility_key,
 )
-from src.utility.constants import DP_SYNTHESIZERS
 
 RISK_COLUMN = "Privacy risk (singling-out multivariate)"
 F1_COLUMN = "F1 (macro)"
@@ -30,15 +30,21 @@ def render_tradeoff_tab(
     privacy_records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
+    run_mode: str,
+    selected_date: str | None,
 ) -> None:
     """Render privacy/utility trade-off charts and table."""
     st.markdown(
         "**FF3 — Trade-off:** Privacy vs. utility across synthesizers and ε levels. "
-        "A good synthesizer sits in the **top-left** quadrant: high utility, low privacy risk."
     )
 
     df = build_tradeoff_dataframe(
-        utility_records, privacy_records, selected_synths, selected_epsilons
+        utility_records,
+        privacy_records,
+        selected_synths,
+        selected_epsilons,
+        run_mode,
+        selected_date,
     )
     df_both = df.dropna(subset=[F1_COLUMN, RISK_COLUMN])
 
@@ -57,40 +63,57 @@ def build_tradeoff_dataframe(
     privacy_records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
+    run_mode: str,
+    selected_date: str | None,
 ) -> pd.DataFrame:
     """Combine best utility F1 and privacy risk by synthesizer/epsilon."""
-    utility_latest = latest_by(
-        filter_results(utility_records, selected_synths, selected_epsilons), utility_key
+    utility_latest = select_runs(
+        filter_results(utility_records, selected_synths, selected_epsilons),
+        utility_key,
+        run_mode,  # type: ignore[arg-type]
+        selected_date,
     )
-    privacy_latest = latest_by(
-        filter_results(privacy_records, selected_synths, selected_epsilons), result_key
+    privacy_latest = select_runs(
+        filter_results(privacy_records, selected_synths, selected_epsilons),
+        result_key,
+        run_mode,  # type: ignore[arg-type]
+        selected_date,
     )
 
-    best_f1: dict[tuple[str, float | None], float] = {}
+    def join_key(record: Result) -> tuple[str, float | None, str | None]:
+        date = run_date(record) if run_mode == "All runs" else None
+        return (synthesizer_key(record), epsilon_of(record), date)
+
+    best_f1: dict[tuple[str, float | None, str | None], float] = {}
     for record in utility_latest:
-        key = (synthesizer_key(record), epsilon_of(record))
+        key = join_key(record)
         f1 = summary(record).get("test_f1_macro")
         if f1 is not None:
             best_f1[key] = max(best_f1.get(key, 0), float(f1))
 
-    risk_map: dict[tuple[str, float | None], float] = {}
+    risk_map: dict[tuple[str, float | None, str | None], float] = {}
     for record in privacy_latest:
-        key = (synthesizer_key(record), epsilon_of(record))
+        key = join_key(record)
         risk = summary(record).get("singling_out_risk_multivariate")
         if risk is not None:
             risk_map[key] = float(risk)
 
     rows = []
-    for synth, epsilon in sorted(
-        set(best_f1) | set(risk_map), key=lambda item: (item[0], item[1] or 0)
+    for synth, epsilon, date in sorted(
+        set(best_f1) | set(risk_map),
+        key=lambda item: (item[0], item[1] or 0, item[2] or ""),
     ):
+        label = source_label(synth, epsilon)
+        if date is not None:
+            label = f"{label} ({date})"
         rows.append(
             {
-                "Source": source_label(synth, epsilon),
+                "Source": label,
                 "Synth": synth,
                 "Epsilon": epsilon,
-                F1_COLUMN: best_f1.get((synth, epsilon)),
-                RISK_COLUMN: risk_map.get((synth, epsilon)),
+                "Run date": date,
+                F1_COLUMN: best_f1.get((synth, epsilon, date)),
+                RISK_COLUMN: risk_map.get((synth, epsilon, date)),
                 "_color": get_color(synth, epsilon),
             }
         )
@@ -114,7 +137,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
                 ),
             )
         )
-            
+
     fig.update_layout(
         title="Privacy-utility trade-off (best F1 vs singling-out multivariate risk)",
         xaxis=dict(
