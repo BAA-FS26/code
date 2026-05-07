@@ -14,11 +14,6 @@ Runs four evaluations for each synthesizer:
 
 Results are always saved locally as JSON. W&B logging is optional.
 
-The val set is used as the Anonymeter control dataset — it consists of
-real records that were not used to train the synthesizer, making it
-suitable for separating general population patterns from training-specific
-privacy leakage.
-
 Usage:
     # Without W&B (default)
     python -m src.evaluation.evaluate_privacy --synthesizer gaussian_copula
@@ -439,14 +434,20 @@ def evaluate_privacy(
     metadata_key = _metadata_key(synthesizer_name)
 
     parameters = {
+        "pipeline_stage": "evaluation",
+        "evaluation": "privacy",
+        "mode": "default" if epsilon is None else f"eps_{epsilon}",
+        "data_source": data_source,
         "synthesizer": synthesizer_name,
         "epsilon": epsilon,
-        "data_source": data_source,
-        "evaluation": "privacy",
+        "classifier": None,
+        "model_type": None,
+        "params": {},
+        "random_state": RANDOM_STATE,
+        "use_wandb": use_wandb,
         "metadata_key": metadata_key,
         "n_attacks": N_ATTACKS,
         "sensitive_cols": SENSITIVE_COLS,
-        "use_wandb": use_wandb,
     }
 
     with RunLogger(
@@ -454,7 +455,7 @@ def evaluate_privacy(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
-        category="privacy"
+        category="privacy",
     ) as logger:
         train_df, holdout_df, synthetic_df, paths = load_data(
             synthesizer_name=synthesizer_name,
@@ -500,7 +501,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS + DP_SYNTHESIZERS,
+        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
         required=True,
         help="Synthesizer to evaluate.",
     )

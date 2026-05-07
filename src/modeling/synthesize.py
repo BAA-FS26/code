@@ -302,19 +302,22 @@ def train_and_generate(
     gpu_available = torch.cuda.is_available()
     gpu_in_use = cuda and gpu_available
 
+    data_source = synthesizer_name
     parameters = {
-        "synthesizer": synthesizer_name,
+        "pipeline_stage": "synthesis",
+        "evaluation": None,
         "mode": "default",
+        "data_source": data_source,
+        "synthesizer": synthesizer_name,
+        "epsilon": None,
+        "classifier": None,
+        "model_type": None,
+        "params": {},
+        "random_state": RANDOM_STATE,
+        "use_wandb": use_wandb,
         "cuda_requested": cuda,
         "gpu_available": gpu_available,
         "gpu_in_use": gpu_in_use,
-        "random_state": RANDOM_STATE,
-        "use_wandb": use_wandb,
-        "reproducibility_note": (
-            "Random seeds and deterministic PyTorch settings are enabled where "
-            "possible. Some GPU operations and third-party model internals may "
-            "still remain nondeterministic."
-        ),
     }
 
     with RunLogger(
@@ -322,6 +325,7 @@ def train_and_generate(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="synthesis",
     ) as logger:
         train_df = _load_training_data()
         n_samples = len(train_df)

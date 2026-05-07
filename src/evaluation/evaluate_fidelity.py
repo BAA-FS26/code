@@ -328,12 +328,18 @@ def evaluate_fidelity(
     metadata_key = _metadata_key(synthesizer_name)
 
     parameters = {
+        "pipeline_stage": "evaluation",
+        "evaluation": "fidelity",
+        "mode": "default" if epsilon is None else f"eps_{epsilon}",
+        "data_source": data_source,
         "synthesizer": synthesizer_name,
         "epsilon": epsilon,
-        "data_source": data_source,
-        "evaluation": "fidelity",
-        "metadata_key": metadata_key,
+        "classifier": None,
+        "model_type": None,
+        "params": {},
+        "random_state": None,
         "use_wandb": use_wandb,
+        "metadata_key": metadata_key,
     }
 
     with RunLogger(
@@ -380,7 +386,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS + DP_SYNTHESIZERS,
+        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
         required=True,
         help="Synthesizer to evaluate.",
     )

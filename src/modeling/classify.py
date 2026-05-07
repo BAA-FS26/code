@@ -4,11 +4,13 @@ classify.py
 Binary classification pipeline for the Adult Census Income dataset.
 
 Modes:
-  - default:    train with default hyperparameters and evaluate on validation set
+  - default:    train with default hyperparameters, evaluate on validation set,
+                and save model
   - sweep:      run a W&B hyperparameter sweep on validation set (requires --wandb)
   - fetch_best: fetch best hyperparameters from latest sweep and save to config/
-  - best:       train with best hyperparameters, evaluate on validation set, and save model
-  - test:       evaluate saved model on the held-out test set
+  - best:       train with best hyperparameters, evaluate on validation set,
+                and save model
+  - test:       evaluate a saved model on the held-out test set
 
 Data sources:
   - real: use --data_source real
@@ -22,7 +24,12 @@ Usage:
     # Real data
     python -m src.modeling.classify --mode default --classifier logistic_regression --data_source real
     python -m src.modeling.classify --mode best --classifier logistic_regression --data_source real --params best_logistic_regression_real.yaml
-    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real
+
+    # Evaluate saved default model on test set
+    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real --model_type default
+
+    # Evaluate saved best model on test set
+    python -m src.modeling.classify --mode test --classifier logistic_regression --data_source real --model_type best
 
     # W&B sweep
     python -m src.modeling.classify --mode sweep --classifier logistic_regression --data_source real --wandb
@@ -31,12 +38,14 @@ Usage:
     # TSTR (non-DP)
     python -m src.modeling.classify --mode default --classifier logistic_regression --synthesizer gaussian_copula
     python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer gaussian_copula --params best_logistic_regression_real.yaml
-    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer gaussian_copula
+    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer gaussian_copula --model_type default
+    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer gaussian_copula --model_type best
 
     # TSTR (DP)
     python -m src.modeling.classify --mode default --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0
     python -m src.modeling.classify --mode best --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0 --params best_logistic_regression_real.yaml
-    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0
+    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0 --model_type default
+    python -m src.modeling.classify --mode test --classifier logistic_regression --synthesizer dpctgan --epsilon 1.0 --model_type best
 """
 
 import argparse
@@ -118,9 +127,12 @@ def _synthetic_train_path(data_source: str) -> Path:
     return SYNTHETIC_DATA_DIR / data_source / "default" / SYNTHETIC_TRAIN_FILENAME
 
 
-def _saved_model_path(classifier_name: str, data_source: str) -> Path:
+def _saved_model_path(classifier_name: str, data_source: str, model_type: str) -> Path:
     """Return the canonical saved model path."""
-    return MODELS_DIR / f"{data_source.replace('/', '_')}_{classifier_name}.pkl"
+    return (
+        MODELS_DIR
+        / f"{data_source.replace('/', '_')}_{classifier_name}_{model_type}.pkl"
+    )
 
 
 def _best_params_path(classifier_name: str, data_source: str) -> Path:
@@ -490,6 +502,7 @@ def train_and_evaluate(
     params: dict[str, Any],
     run_name: str,
     mode: str,
+    model_type: str | None = None,
     save_model: bool = False,
     use_wandb: bool = False,
 ) -> None:
@@ -515,13 +528,20 @@ def train_and_evaluate(
     """
     current_seed = params.get("seed", RANDOM_STATE)
     parameters = {
+        "pipeline_stage": "utility",
+        "evaluation": None,
         "mode": mode,
-        "classifier": classifier_name,
         "data_source": data_source,
+        "synthesizer": None if data_source == "real" else data_source.split("/")[0],
+        "epsilon": (
+            float(data_source.split("eps_", 1)[1]) if "/eps_" in data_source else None
+        ),
+        "classifier": classifier_name,
+        "model_type": model_type,
         "params": params,
-        "seed": current_seed,
-        "save_model": save_model,
+        "random_state": current_seed,
         "use_wandb": use_wandb,
+        "save_model": save_model,
     }
 
     with RunLogger(
@@ -529,7 +549,7 @@ def train_and_evaluate(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
-        category="utility"
+        category="utility",
     ) as logger:
         set_random_seeds(current_seed)
 
@@ -551,8 +571,10 @@ def train_and_evaluate(
         logger.log(val_metrics)
 
         if save_model:
+            if model_type is None:
+                raise ValueError("model_type must be provided when save_model=True.")
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
-            model_path = _saved_model_path(classifier_name, data_source)
+            model_path = _saved_model_path(classifier_name, data_source, model_type)
             payload = {
                 "model": model,
                 "preprocessor": preprocessor,
@@ -577,6 +599,7 @@ def train_and_evaluate(
 def evaluate_on_test(
     classifier_name: str,
     data_source: str,
+    model_type: str,
     use_wandb: bool = False,
 ) -> None:
     """
@@ -595,7 +618,7 @@ def evaluate_on_test(
         data_source: One of 'real', 'gaussian_copula', 'ctgan', 'tvae', or a DP source.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    model_path = _saved_model_path(classifier_name, data_source)
+    model_path = _saved_model_path(classifier_name, data_source, model_type)
     if not model_path.exists():
         raise FileNotFoundError(
             f"No saved model found at {model_path}. "
@@ -635,23 +658,40 @@ def evaluate_on_test(
             f"expected '{data_source}', got '{metadata.get('data_source')}'."
         )
 
+    params = metadata.get("params", {})
     model = saved["model"]
     preprocessor = saved["preprocessor"]
     test_df = load_test()
     X_test, y_test = prepare_single(classifier_name, test_df, preprocessor)
 
-    run_name = f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}"
+    run_name = (
+        f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}_{model_type}"
+    )
     parameters = {
+        "pipeline_stage": "utility",
+        "evaluation": "utility",
         "mode": "test",
-        "classifier": classifier_name,
         "data_source": data_source,
-        "model_path": model_path,
+        "synthesizer": None if data_source == "real" else data_source.split("/")[0],
+        "epsilon": (
+            float(data_source.split("eps_", 1)[1]) if "/eps_" in data_source else None
+        ),
+        "classifier": classifier_name,
+        "model_type": model_type,
+        "params": params,
+        "random_state": (
+            params.get("seed", RANDOM_STATE)
+            if isinstance(params, dict)
+            else RANDOM_STATE
+        ),
         "use_wandb": use_wandb,
+        "model_path": model_path,
     }
 
     print(
         f"[classify] Evaluating saved {classifier_name} model on real test data "
-        f"for source '{data_source}'"
+        f"for source '{data_source}' "
+        f"with '{model_type}' hyperparameters"
     )
 
     with RunLogger(
@@ -659,8 +699,7 @@ def evaluate_on_test(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
-        category="utility"
-        
+        category="utility",
     ) as logger:
         logger.log(compute_metrics(y_test, model.predict(X_test), prefix="test"))
 
@@ -814,7 +853,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS + DP_SYNTHESIZERS,
+        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
         default=None,
         help="Synthetic data source to train on instead of real data.",
     )
@@ -834,6 +873,14 @@ def main() -> None:
             "Required for --mode best."
         ),
     )
+
+    parser.add_argument(
+        "--model_type",
+        choices=["default", "best"],
+        default="best",
+        help="Which saved model variant to evaluate in test mode.",
+    )
+
     parser.add_argument(
         "--wandb",
         action="store_true",
@@ -869,6 +916,8 @@ def main() -> None:
             params={"seed": RANDOM_STATE},
             run_name=f"{resolved_data_source.replace('/', '_')}_{args.classifier}_default",
             mode="default",
+            model_type="default",
+            save_model=True,
             use_wandb=args.wandb,
         )
 
@@ -899,14 +948,17 @@ def main() -> None:
             params=best_params,
             run_name=f"{resolved_data_source.replace('/', '_')}_{args.classifier}_best",
             mode="best",
+            model_type="best",
             save_model=True,
             use_wandb=args.wandb,
         )
 
     elif args.mode == "test":
+
         evaluate_on_test(
             classifier_name=args.classifier,
             data_source=resolved_data_source,
+            model_type=args.model_type,
             use_wandb=args.wandb,
         )
 

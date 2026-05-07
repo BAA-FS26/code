@@ -9,23 +9,6 @@ Supported synthesizers:
   - dpctgan:   DP-SGD-based conditional tabular GAN (Xu et al., 2019)
   - patectgan: PATE-based conditional tabular GAN (Jordon et al., 2019)
 
-Both synthesizers are provided by the SmartNoise Synth library and use the
-same fit/sample API. DPCTGAN applies differential privacy via DP-SGD to the
-discriminator gradients. PATECTGAN uses the Private Aggregation of Teacher
-Ensembles (PATE) framework, which provides privacy guarantees through an
-ensemble of teacher discriminators and a student generator.
-
-Epsilon values are not directly comparable across the two mechanisms due to
-their different privacy accounting approaches. Results should be interpreted
-within each synthesizer separately when comparing across epsilon values.
-
-Output is saved to:
-    data/synthetic/{synthesizer}/eps_{epsilon}/synthetic_train.csv
-
-This path structure ensures each (synthesizer, epsilon) combination has its
-own isolated output directory, consistent with the non-DP pipeline layout
-under data/synthetic/{synthesizer}/default/.
-
 Usage:
     # Without W&B (default)
     python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 1.0
@@ -275,20 +258,23 @@ def train_and_generate(
     gpu_available = torch.cuda.is_available()
     gpu_in_use = cuda and gpu_available
 
+    data_source = f"{synthesizer_name}/eps_{epsilon}"
     parameters = {
+        "pipeline_stage": "synthesis",
+        "evaluation": None,
+        "mode": f"eps_{epsilon}",
+        "data_source": data_source,
         "synthesizer": synthesizer_name,
         "epsilon": epsilon,
-        "preprocessor_eps": preprocessor_eps,
+        "classifier": None,
+        "model_type": None,
+        "params": {},
+        "random_state": RANDOM_STATE,
+        "use_wandb": use_wandb,
         "cuda_requested": cuda,
         "gpu_available": gpu_available,
         "gpu_in_use": gpu_in_use,
-        "random_state": RANDOM_STATE,
-        "use_wandb": use_wandb,
-        "reproducibility_note": (
-            "Random seeds and deterministic PyTorch settings are enabled where "
-            "possible. Some GPU operations and third-party model internals may "
-            "still remain nondeterministic."
-        ),
+        "preprocessor_eps": preprocessor_eps,
     }
 
     with RunLogger(
@@ -296,6 +282,7 @@ def train_and_generate(
         script_name=SCRIPT_NAME,
         parameters=parameters,
         use_wandb=use_wandb,
+        category="synthesis",
     ) as logger:
         train_df = _load_training_data()
         n_samples = len(train_df)
