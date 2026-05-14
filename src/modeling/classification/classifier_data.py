@@ -114,6 +114,11 @@ def prepare_single(classifier_name: str, df: pd.DataFrame, preprocessor) -> tupl
     Returns:
         Tuple of (X, y).
     """
+    if classifier_name != "gradient_boosting" and preprocessor is None:
+        raise ValueError(
+            f"Classifier '{classifier_name}' requires a fitted preprocessor."
+        )
+
     return _apply_preprocessor(classifier_name, df, preprocessor)
 
 
