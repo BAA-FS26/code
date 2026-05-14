@@ -59,6 +59,10 @@ from src.utility.utils import (
     set_random_seeds,
 )
 
+from src.core.data_source import build_data_source_key
+from src.core.io import load_csv, validate_dataframe_schema
+from src.core.paths import processed_split_path, synthetic_train_path
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_NAME = "evaluate_privacy.py"
@@ -67,80 +71,6 @@ N_ATTACKS = 2000
 
 # Based on EDA findings — inter-feature associations and data protection relevance
 SENSITIVE_COLS = ["income", "occupation", "sex", "relationship"]
-
-
-# ── Path and argument helpers ────────────────────────────────────────────────
-
-
-def _processed_split_path(filename: str) -> Path:
-    """Return the canonical path to a processed split file."""
-    return PROCESSED_DATA_DIR / filename
-
-
-def _data_source_key(synthesizer_name: str, epsilon: float | None) -> str:
-    """
-    Build the canonical synthetic data source key used in directory paths.
-
-    Non-DP example:
-        gaussian_copula
-
-    DP example:
-        dpctgan/eps_1.0
-    """
-    if synthesizer_name in DP_SYNTHESIZERS:
-        if epsilon is None:
-            raise ValueError(
-                f"Epsilon is required for DP synthesizer '{synthesizer_name}'."
-            )
-        return f"{synthesizer_name}/eps_{epsilon}"
-    return synthesizer_name
-
-
-def _synthetic_train_path(synthesizer_name: str, epsilon: float | None) -> Path:
-    """Return the canonical path to the synthetic training data."""
-    data_source = _data_source_key(synthesizer_name, epsilon)
-    if synthesizer_name in DP_SYNTHESIZERS:
-        return SYNTHETIC_DATA_DIR / data_source / SYNTHETIC_TRAIN_FILENAME
-    return SYNTHETIC_DATA_DIR / synthesizer_name / "default" / SYNTHETIC_TRAIN_FILENAME
-
-
-def _metadata_key(synthesizer_name: str) -> str:
-    """Return the synthesizer key used for metadata lookup."""
-    return synthesizer_name
-
-
-def _load_csv(path: Path, description: str) -> pd.DataFrame:
-    """
-    Load a CSV file with a clear pipeline-friendly error if it is missing.
-    """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{description} not found at {path}. "
-            "Run the required earlier pipeline step first."
-        )
-    return pd.read_csv(path)
-
-
-def _validate_matching_schema(
-    reference_df: pd.DataFrame,
-    candidate_df: pd.DataFrame,
-    candidate_name: str,
-) -> None:
-    """
-    Validate that a candidate dataframe has identical columns to a reference.
-
-    Raises:
-        ValueError: If columns do not match exactly in order.
-    """
-    reference_columns = list(reference_df.columns)
-    candidate_columns = list(candidate_df.columns)
-    if candidate_columns != reference_columns:
-        raise ValueError(
-            f"{candidate_name} columns do not match reference training data columns.\n"
-            f"Expected: {reference_columns}\n"
-            f"Actual:   {candidate_columns}"
-        )
-
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
@@ -152,14 +82,6 @@ def load_data(
     """
     Load real training data, combined holdout data, and synthetic data.
 
-    The holdout dataset combines validation and test splits. Neither was used
-    to train the synthesizer, making both valid as Anonymeter control
-    data. Combining them gives a larger holdout for more statistically robust
-    privacy evaluation.
-
-    Note: the combined holdout is only used for privacy evaluation.
-    The test split remains reserved for TSTR utility evaluation in classify.py.
-
     Args:
         synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae',
                           'dpctgan', or 'patectgan'.
@@ -169,19 +91,21 @@ def load_data(
     Returns:
         Tuple of (train_df, holdout_df, synthetic_df, paths).
     """
-    train_path = _processed_split_path(TRAIN_FILENAME)
-    validation_path = _processed_split_path(VALIDATION_FILENAME)
-    test_path = _processed_split_path(TEST_FILENAME)
-    synthetic_path = _synthetic_train_path(synthesizer_name, epsilon)
+    data_source = build_data_source_key(synthesizer_name, epsilon)
 
-    train_df = _load_csv(train_path, "Training split")
-    val_df = _load_csv(validation_path, "Validation split")
-    test_df = _load_csv(test_path, "Test split")
-    synthetic_df = _load_csv(synthetic_path, "Synthetic training data")
+    train_path = processed_split_path(TRAIN_FILENAME)
+    validation_path = processed_split_path(VALIDATION_FILENAME)
+    test_path = processed_split_path(TEST_FILENAME)
+    synthetic_path = synthetic_train_path(data_source)
 
-    _validate_matching_schema(train_df, val_df, "Validation split")
-    _validate_matching_schema(train_df, test_df, "Test split")
-    _validate_matching_schema(train_df, synthetic_df, "Synthetic training data")
+    train_df = load_csv(train_path, "Training split")
+    val_df = load_csv(validation_path, "Validation split")
+    test_df = load_csv(test_path, "Test split")
+    synthetic_df = load_csv(synthetic_path, "Synthetic training data")
+
+    validate_dataframe_schema(train_df, val_df, "Validation split")
+    validate_dataframe_schema(train_df, test_df, "Test split")
+    validate_dataframe_schema(train_df, synthetic_df, "Synthetic training data")
 
     holdout_df = pd.concat([val_df, test_df], ignore_index=True)
 
@@ -429,9 +353,8 @@ def evaluate_privacy(
                  non-DP synthesizers.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    data_source = _data_source_key(synthesizer_name, epsilon)
+    data_source = build_data_source_key(synthesizer_name, epsilon)
     run_name = f"eval_privacy_{data_source.replace('/', '_')}"
-    metadata_key = _metadata_key(synthesizer_name)
 
     parameters = {
         "pipeline_stage": "evaluation",
@@ -445,7 +368,7 @@ def evaluate_privacy(
         "params": {},
         "random_state": RANDOM_STATE,
         "use_wandb": use_wandb,
-        "metadata_key": metadata_key,
+        "metadata_key": synthesizer_name,
         "n_attacks": N_ATTACKS,
         "sensitive_cols": SENSITIVE_COLS,
     }
@@ -463,7 +386,7 @@ def evaluate_privacy(
         )
         metadata = load_metadata(
             MODELS_DIR,
-            metadata_key,
+            synthesizer_name,
             fallback=build_adult_sdmetrics_metadata(),
         )
 

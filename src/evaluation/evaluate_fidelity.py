@@ -50,6 +50,9 @@ from src.utility.constants import (
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import build_adult_sdmetrics_metadata, load_metadata
+from src.core.data_source import build_data_source_key
+from src.core.io import load_csv, validate_dataframe_schema
+from src.core.paths import processed_split_path, synthetic_train_path
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,77 +61,6 @@ MODELS_DIR = SYNTHESIZER_MODELS_DIR
 
 
 # ── Path and argument helpers ────────────────────────────────────────────────
-
-
-def _real_train_path() -> Path:
-    """Return the canonical path to the real training split."""
-    return PROCESSED_DATA_DIR / TRAIN_FILENAME
-
-
-def _data_source_key(synthesizer_name: str, epsilon: float | None) -> str:
-    """
-    Build the canonical synthetic data source key used in directory paths.
-
-    Non-DP example:
-        gaussian_copula
-
-    DP example:
-        dpctgan/eps_1.0
-    """
-    if synthesizer_name in DP_SYNTHESIZERS:
-        if epsilon is None:
-            raise ValueError(
-                f"Epsilon is required for DP synthesizer '{synthesizer_name}'."
-            )
-        return f"{synthesizer_name}/eps_{epsilon}"
-    return synthesizer_name
-
-
-def _synthetic_train_path(synthesizer_name: str, epsilon: float | None) -> Path:
-    """Return the canonical path to the synthetic training data."""
-    data_source = _data_source_key(synthesizer_name, epsilon)
-    if synthesizer_name in DP_SYNTHESIZERS:
-        return SYNTHETIC_DATA_DIR / data_source / SYNTHETIC_TRAIN_FILENAME
-    return SYNTHETIC_DATA_DIR / synthesizer_name / "default" / SYNTHETIC_TRAIN_FILENAME
-
-
-def _metadata_key(synthesizer_name: str) -> str:
-    """
-    Return the synthesizer key used for metadata lookup.
-
-    DP synthesizers use fallback metadata keyed by synthesizer name.
-    Non-DP synthesizers use saved SDV metadata keyed by synthesizer name.
-    """
-    return synthesizer_name
-
-
-def _load_csv(path: Path, description: str) -> pd.DataFrame:
-    """
-    Load a CSV file with a clear pipeline-friendly error if it is missing.
-    """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{description} not found at {path}. "
-            "Run the required earlier pipeline step first."
-        )
-    return pd.read_csv(path)
-
-
-def _validate_matching_schema(
-    real_df: pd.DataFrame,
-    synthetic_df: pd.DataFrame,
-) -> None:
-    """
-    Validate that real and synthetic dataframes have identical columns in order.
-    """
-    real_columns = list(real_df.columns)
-    synthetic_columns = list(synthetic_df.columns)
-    if synthetic_columns != real_columns:
-        raise ValueError(
-            "Synthetic data columns do not match real training data columns.\n"
-            f"Expected: {real_columns}\n"
-            f"Actual:   {synthetic_columns}"
-        )
 
 
 def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
@@ -149,8 +81,6 @@ def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-
-
 def load_data(
     synthesizer_name: str,
     epsilon: float | None = None,
@@ -173,12 +103,15 @@ def load_data(
     Returns:
         Tuple of (real_train_df, synthetic_df, real_path, synthetic_path).
     """
-    real_path = _real_train_path()
-    synthetic_path = _synthetic_train_path(synthesizer_name, epsilon)
+    data_source = build_data_source_key(synthesizer_name, epsilon)
 
-    real_df = _load_csv(real_path, "Real training split")
-    synthetic_df = _load_csv(synthetic_path, "Synthetic training data")
-    _validate_matching_schema(real_df, synthetic_df)
+    real_path = processed_split_path(TRAIN_FILENAME)
+    synthetic_path = synthetic_train_path(data_source)
+
+    real_df = load_csv(real_path, "Real training split")
+    synthetic_df = load_csv(synthetic_path, "Synthetic training data")
+
+    validate_dataframe_schema(real_df, synthetic_df, "Synthetic training data")
 
     return real_df, synthetic_df, real_path, synthetic_path
 
@@ -323,9 +256,8 @@ def evaluate_fidelity(
                  non-DP synthesizers.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    data_source = _data_source_key(synthesizer_name, epsilon)
+    data_source = build_data_source_key(synthesizer_name, epsilon)
     run_name = f"eval_fidelity_{data_source.replace('/', '_')}"
-    metadata_key = _metadata_key(synthesizer_name)
 
     parameters = {
         "pipeline_stage": "evaluation",
@@ -339,7 +271,7 @@ def evaluate_fidelity(
         "params": {},
         "random_state": None,
         "use_wandb": use_wandb,
-        "metadata_key": metadata_key,
+        "metadata_key": synthesizer_name,
     }
 
     with RunLogger(
@@ -355,7 +287,7 @@ def evaluate_fidelity(
         )
         metadata = load_metadata(
             MODELS_DIR,
-            metadata_key,
+            synthesizer_name,
             fallback=build_adult_sdmetrics_metadata(),
         )
 

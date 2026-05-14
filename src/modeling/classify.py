@@ -94,6 +94,19 @@ from src.utility.wandb_config import (
     require_wandb_config,
 )
 
+from src.core.data_source import (
+    epsilon_from_data_source,
+    resolve_training_data_source,
+    synthesizer_from_data_source,
+)
+from src.core.io import load_csv, validate_expected_columns
+from src.core.paths import (
+    best_params_path,
+    classifier_model_path,
+    processed_split_path,
+    synthetic_train_path,
+)
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_NAME = "classify.py"
@@ -108,72 +121,6 @@ PARAM_ABBREVIATIONS = {
     "max_leaf_nodes": "mln",
     "C": "C",
 }
-
-
-# ── Path helpers ──────────────────────────────────────────────────────────────
-
-
-def _processed_split_path(filename: str) -> Path:
-    """Return the canonical path to a processed split file."""
-    return PROCESSED_DATA_DIR / filename
-
-
-def _synthetic_train_path(data_source: str) -> Path:
-    """
-    Return the canonical synthetic training data path for a data source.
-    """
-    if "/" in data_source:
-        return SYNTHETIC_DATA_DIR / data_source / SYNTHETIC_TRAIN_FILENAME
-    return SYNTHETIC_DATA_DIR / data_source / "default" / SYNTHETIC_TRAIN_FILENAME
-
-
-def _saved_model_path(classifier_name: str, data_source: str, model_type: str) -> Path:
-    """Return the canonical saved model path."""
-    return (
-        MODELS_DIR
-        / f"{data_source.replace('/', '_')}_{classifier_name}_{model_type}.pkl"
-    )
-
-
-def _best_params_path(classifier_name: str, data_source: str) -> Path:
-    """Return the canonical best-params config path."""
-    safe_source = data_source.replace("/", "_")
-    return CONFIG_DIR / f"best_{classifier_name}_{safe_source}.yaml"
-
-
-def _resolve_data_source(
-    data_source: str,
-    synthesizer: str | None,
-    epsilon: float | None,
-) -> str:
-    """
-    Resolve the canonical internal data-source key used by paths and model names.
-
-    Returns:
-        One of:
-        - "real"
-        - "<non-dp-synthesizer>"
-        - "<dp-synthesizer>/eps_<epsilon>"
-    """
-    if synthesizer is None:
-        if epsilon is not None:
-            raise ValueError("--epsilon should only be used with DP synthesizers.")
-        return data_source
-
-    if data_source != "real":
-        raise ValueError(
-            "--synthesizer cannot be combined with a non-real --data_source."
-        )
-
-    if synthesizer in DP_SYNTHESIZERS:
-        if epsilon is None:
-            raise ValueError("--epsilon is required for DP synthesizers.")
-        return f"{synthesizer}/eps_{epsilon}"
-
-    if epsilon is not None:
-        raise ValueError("--epsilon should only be used with DP synthesizers.")
-
-    return synthesizer
 
 
 # ── Validation helpers ────────────────────────────────────────────────────────
@@ -196,38 +143,6 @@ def _require_wandb_support() -> Any:
         )
     require_wandb_config()
     return cast(Any, _wandb)
-
-
-def _load_csv(path: Path, description: str) -> pd.DataFrame:
-    """
-    Load a CSV from disk with a clear, pipeline-friendly error message.
-    """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{description} not found at {path}. "
-            "Run the required earlier pipeline step first."
-        )
-    return pd.read_csv(path)
-
-
-def _validate_dataframe_schema(
-    df: pd.DataFrame,
-    expected_columns: list[str],
-    dataframe_name: str,
-) -> None:
-    """
-    Validate that a DataFrame has exactly the expected columns in order.
-
-    Raises:
-        ValueError: If columns do not match.
-    """
-    actual_columns = list(df.columns)
-    if actual_columns != expected_columns:
-        raise ValueError(
-            f"{dataframe_name} columns do not match expected schema.\n"
-            f"Expected: {expected_columns}\n"
-            f"Actual:   {actual_columns}"
-        )
 
 
 def _validate_params_dict(params: Any, source_description: str) -> dict[str, Any]:
@@ -270,16 +185,16 @@ def load_splits(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         ValueError: If loaded training data schema does not match validation schema.
     """
     if data_source == "real":
-        train_path = _processed_split_path(TRAIN_FILENAME)
+        train_path = processed_split_path(TRAIN_FILENAME)
     else:
-        train_path = _synthetic_train_path(data_source)
+        train_path = synthetic_train_path(data_source)
 
-    val_path = _processed_split_path(VALIDATION_FILENAME)
+    val_path = processed_split_path(VALIDATION_FILENAME)
 
-    train_df = _load_csv(train_path, "Training split")
-    val_df = _load_csv(val_path, "Validation split")
+    train_df = load_csv(train_path, "Training split")
+    val_df = load_csv(val_path, "Validation split")
 
-    _validate_dataframe_schema(
+    validate_expected_columns(
         train_df,
         expected_columns=list(val_df.columns),
         dataframe_name=f"Training data for source '{data_source}'",
@@ -309,8 +224,8 @@ def load_test() -> pd.DataFrame:
     Raises:
         FileNotFoundError: If the canonical test split is missing.
     """
-    test_path = _processed_split_path(TEST_FILENAME)
-    test_df = _load_csv(test_path, "Test split")
+    test_path = processed_split_path(TEST_FILENAME)
+    test_df = load_csv(test_path, "Test split")
     print(f"[classify] Loaded test data ({len(test_df)} rows)")
     return test_df
 
@@ -532,10 +447,8 @@ def train_and_evaluate(
         "evaluation": None,
         "mode": mode,
         "data_source": data_source,
-        "synthesizer": None if data_source == "real" else data_source.split("/")[0],
-        "epsilon": (
-            float(data_source.split("eps_", 1)[1]) if "/eps_" in data_source else None
-        ),
+        "synthesizer": synthesizer_from_data_source(data_source),
+        "epsilon": epsilon_from_data_source(data_source),
         "classifier": classifier_name,
         "model_type": model_type,
         "params": params,
@@ -574,7 +487,7 @@ def train_and_evaluate(
             if model_type is None:
                 raise ValueError("model_type must be provided when save_model=True.")
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
-            model_path = _saved_model_path(classifier_name, data_source, model_type)
+            model_path = classifier_model_path(classifier_name, data_source, model_type)
             payload = {
                 "model": model,
                 "preprocessor": preprocessor,
@@ -618,7 +531,7 @@ def evaluate_on_test(
         data_source: One of 'real', 'gaussian_copula', 'ctgan', 'tvae', or a DP source.
         use_wandb: Whether to log results to W&B. Defaults to False.
     """
-    model_path = _saved_model_path(classifier_name, data_source, model_type)
+    model_path = classifier_model_path(classifier_name, data_source, model_type)
     if not model_path.exists():
         raise FileNotFoundError(
             f"No saved model found at {model_path}. "
@@ -743,7 +656,7 @@ def fetch_best_params(classifier_name: str, data_source: str) -> None:
     }
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = _best_params_path(classifier_name, data_source)
+    output_path = best_params_path(classifier_name, data_source)
     with open(output_path, "w") as f:
         yaml.safe_dump(best_params, f, sort_keys=True)
 
@@ -893,7 +806,7 @@ def main() -> None:
 
     args = parser.parse_args()
     try:
-        resolved_data_source = _resolve_data_source(
+        resolved_data_source = resolve_training_data_source(
             data_source=args.data_source,
             synthesizer=args.synthesizer,
             epsilon=args.epsilon,
