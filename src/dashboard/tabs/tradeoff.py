@@ -128,14 +128,17 @@ def build_tradeoff_dataframe(
         label = source_label(synth, epsilon)
         if date is not None:
             label = f"{label} ({date})"
+        
+        test_f1_raw = best_f1.get((synth, epsilon, date))
+        risk_raw = risk_map.get((synth, epsilon, date))
         rows.append(
             {
                 "Source": label,
                 "Synth": synth,
                 "Epsilon": epsilon,
                 "Run date": date,
-                F1_COLUMN: best_f1.get((synth, epsilon, date)),
-                RISK_COLUMN: risk_map.get((synth, epsilon, date)),
+                F1_COLUMN: test_f1_raw * 100 if test_f1_raw is not None else None,
+                RISK_COLUMN: risk_raw * 100 if risk_raw is not None else None,
                 "_color": get_color(synth, epsilon),
             }
         )
@@ -165,12 +168,12 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
         xaxis=dict(
             title="Privacy risk — singling-out multivariate (↓ safer)",
             tickformat=".3f",
-            range=[-0.01, max(df[RISK_COLUMN].max() * 1.3, 0.1)],
+            range=[0, 10],
         ),
         yaxis=dict(
             title="Utility — F1 macro (↑ better)",
             tickformat=".3f",
-            range=[max(df[F1_COLUMN].min() - 0.05, 0), 1.0],
+            range=[0, 105.0],
         ),
         height=500,
         plot_bgcolor=TRANSPARENT,
