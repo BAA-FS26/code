@@ -42,12 +42,9 @@ from sdmetrics.single_table import DCRBaselineProtection, DCROverfittingProtecti
 from src.utility.constants import (
     DP_EPSILONS,
     DP_SYNTHESIZERS,
-    PROCESSED_DATA_DIR,
     RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
-    SYNTHETIC_DATA_DIR,
-    SYNTHETIC_TRAIN_FILENAME,
     TEST_FILENAME,
     TRAIN_FILENAME,
     VALIDATION_FILENAME,
@@ -60,10 +57,8 @@ from src.utility.utils import (
 )
 
 from src.core.data_source import build_data_source_key
-from src.core.io import load_csv, validate_dataframe_schema
+from src.core.io import load_csv, validate_matching_columns
 from src.core.paths import processed_split_path, synthetic_train_path
-
-# ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_NAME = "evaluate_privacy.py"
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
@@ -71,8 +66,6 @@ N_ATTACKS = 2000
 
 # Based on EDA findings — inter-feature associations and data protection relevance
 SENSITIVE_COLS = ["income", "occupation", "sex", "relationship"]
-
-# ── Data loading ──────────────────────────────────────────────────────────────
 
 
 def load_data(
@@ -103,9 +96,9 @@ def load_data(
     test_df = load_csv(test_path, "Test split")
     synthetic_df = load_csv(synthetic_path, "Synthetic training data")
 
-    validate_dataframe_schema(train_df, val_df, "Validation split")
-    validate_dataframe_schema(train_df, test_df, "Test split")
-    validate_dataframe_schema(train_df, synthetic_df, "Synthetic training data")
+    validate_matching_columns(train_df, val_df, "Validation split")
+    validate_matching_columns(train_df, test_df, "Test split")
+    validate_matching_columns(train_df, synthetic_df, "Synthetic training data")
 
     holdout_df = pd.concat([val_df, test_df], ignore_index=True)
 
@@ -120,9 +113,6 @@ def load_data(
             "synthetic_path": synthetic_path,
         },
     )
-
-
-# ── Anonymeter evaluations ────────────────────────────────────────────────────
 
 
 def run_singling_out(
@@ -271,9 +261,6 @@ def run_inference(
         )
 
 
-# ── DCR metrics ───────────────────────────────────────────────────────────────
-
-
 def run_dcr_metrics(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
@@ -329,9 +316,6 @@ def run_dcr_metrics(
             "dcr_overfitting_protection": dcr_overfitting,
         }
     )
-
-
-# ── Main evaluation ───────────────────────────────────────────────────────────
 
 
 def evaluate_privacy(
@@ -413,9 +397,6 @@ def evaluate_privacy(
         run_dcr_metrics(train_df, holdout_df, synthetic_df, metadata, logger)
 
         print("[evaluate_privacy] Privacy evaluation complete.")
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 
 def main() -> None:

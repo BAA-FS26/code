@@ -4,11 +4,12 @@
 Canonical path helpers for the synthetic data evaluation pipeline.
 
 These helpers centralize path construction while preserving the existing
-directory structure and result-file compatibility.
+directory structure, filenames, and result-file compatibility.
 """
 
 from pathlib import Path
 
+from src.core.data_source import REAL_DATA_SOURCE
 from src.utility.constants import (
     CONFIG_DIR,
     MODELS_DIR,
@@ -32,6 +33,9 @@ def synthetic_train_path(data_source: str) -> Path:
         ctgan -> data/synthetic/ctgan/default/synthetic_train.csv
         dpctgan/eps_1.0 -> data/synthetic/dpctgan/eps_1.0/synthetic_train.csv
     """
+    if data_source == REAL_DATA_SOURCE:
+        raise ValueError("Real data does not have a synthetic training-data path.")
+
     if "/" in data_source:
         return SYNTHETIC_DATA_DIR / data_source / SYNTHETIC_TRAIN_FILENAME
 
@@ -64,10 +68,8 @@ def classifier_model_path(
     model_type: str,
 ) -> Path:
     """Return the canonical saved classifier model path."""
-    return (
-        MODELS_DIR
-        / f"{data_source.replace('/', '_')}_{classifier_name}_{model_type}.pkl"
-    )
+    safe_source = data_source.replace("/", "_")
+    return MODELS_DIR / f"{safe_source}_{classifier_name}_{model_type}.pkl"
 
 
 def best_params_path(classifier_name: str, data_source: str) -> Path:

@@ -36,41 +36,13 @@ def load_csv(path: Path, description: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def validate_dataframe_schema(
-    reference_df: pd.DataFrame,
-    candidate_df: pd.DataFrame,
-    candidate_name: str,
-) -> None:
-    """
-    Validate that two DataFrames share the same columns in the same order.
-
-    Args:
-        reference_df: Reference DataFrame defining the expected schema.
-        candidate_df: DataFrame to validate.
-        candidate_name: Human-readable name of the candidate DataFrame.
-
-    Raises:
-        ValueError:
-            If columns differ in names or order.
-    """
-    reference_columns = list(reference_df.columns)
-    candidate_columns = list(candidate_df.columns)
-
-    if candidate_columns != reference_columns:
-        raise ValueError(
-            f"{candidate_name} columns do not match reference schema.\n"
-            f"Expected: {reference_columns}\n"
-            f"Actual:   {candidate_columns}"
-        )
-
-
-def validate_expected_columns(
+def validate_columns(
     df: pd.DataFrame,
     expected_columns: list[str],
     dataframe_name: str,
 ) -> None:
     """
-    Validate that a DataFrame matches an expected column list exactly.
+    Validate that a DataFrame matches an expected ordered column schema.
 
     Args:
         df: DataFrame to validate.
@@ -89,3 +61,38 @@ def validate_expected_columns(
             f"Expected: {expected_columns}\n"
             f"Actual:   {actual_columns}"
         )
+
+
+def validate_matching_columns(
+    reference_df: pd.DataFrame,
+    candidate_df: pd.DataFrame,
+    candidate_name: str,
+) -> None:
+    """
+    Validate that two DataFrames share the same columns in the same order.
+
+    Args:
+        reference_df: Reference DataFrame defining the expected schema.
+        candidate_df: DataFrame to validate.
+        candidate_name: Human-readable name of the candidate DataFrame.
+    """
+    validate_columns(
+        candidate_df,
+        expected_columns=list(reference_df.columns),
+        dataframe_name=candidate_name,
+    )
+
+
+def validate_non_empty_dataframe(
+    df: pd.DataFrame,
+    dataframe_name: str,
+) -> None:
+    """
+    Validate that a DataFrame is not empty.
+
+    Raises:
+        ValueError:
+            If the dataframe is empty.
+    """
+    if df.empty:
+        raise ValueError(f"{dataframe_name} is empty.")

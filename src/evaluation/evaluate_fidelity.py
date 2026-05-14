@@ -41,26 +41,19 @@ from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
 from src.utility.constants import (
     DP_EPSILONS,
     DP_SYNTHESIZERS,
-    PROCESSED_DATA_DIR,
+    RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
-    SYNTHETIC_DATA_DIR,
-    SYNTHETIC_TRAIN_FILENAME,
     TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import build_adult_sdmetrics_metadata, load_metadata
 from src.core.data_source import build_data_source_key
-from src.core.io import load_csv, validate_dataframe_schema
+from src.core.io import load_csv, validate_matching_columns
 from src.core.paths import processed_split_path, synthetic_train_path
-
-# ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_NAME = "evaluate_fidelity.py"
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
-
-
-# ── Path and argument helpers ────────────────────────────────────────────────
 
 
 def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
@@ -80,7 +73,6 @@ def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
     return float(matches.iloc[0])
 
 
-# ── Data loading ──────────────────────────────────────────────────────────────
 def load_data(
     synthesizer_name: str,
     epsilon: float | None = None,
@@ -111,12 +103,13 @@ def load_data(
     real_df = load_csv(real_path, "Real training split")
     synthetic_df = load_csv(synthetic_path, "Synthetic training data")
 
-    validate_dataframe_schema(real_df, synthetic_df, "Synthetic training data")
+    validate_matching_columns(
+        reference_df=real_df,
+        candidate_df=synthetic_df,
+        candidate_name="Synthetic training data",
+    )
 
     return real_df, synthetic_df, real_path, synthetic_path
-
-
-# ── Quality report ────────────────────────────────────────────────────────────
 
 
 def run_quality_report(
@@ -181,10 +174,6 @@ def run_quality_report(
                 f"{property_name}: {exc}"
             )
 
-
-# ── Diagnostic report ─────────────────────────────────────────────────────────
-
-
 def run_diagnostic_report(
     real_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
@@ -233,9 +222,6 @@ def run_diagnostic_report(
         print(f"[evaluate_fidelity] Could not log diagnostic details: {exc}")
 
 
-# ── Main evaluation ───────────────────────────────────────────────────────────
-
-
 def evaluate_fidelity(
     synthesizer_name: str,
     epsilon: float | None = None,
@@ -269,7 +255,7 @@ def evaluate_fidelity(
         "classifier": None,
         "model_type": None,
         "params": {},
-        "random_state": None,
+        "random_state": RANDOM_STATE,
         "use_wandb": use_wandb,
         "metadata_key": synthesizer_name,
     }
@@ -307,10 +293,6 @@ def evaluate_fidelity(
         run_diagnostic_report(real_df, synthetic_df, metadata, logger)
 
         print("[evaluate_fidelity] Fidelity evaluation complete.")
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(

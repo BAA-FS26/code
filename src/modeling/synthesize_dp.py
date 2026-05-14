@@ -29,27 +29,29 @@ Usage:
 
 import argparse
 import time
-from pathlib import Path
 
 import pandas as pd
 import torch
 from snsynth import Synthesizer
+
+from src.core.data_source import build_data_source_key
+from src.core.io import load_csv, validate_matching_columns
+from src.core.paths import (
+    processed_split_path,
+    synthetic_output_dir,
+    synthetic_output_path,
+)
 
 from src.dataset.adult_census import CATEGORICAL_COLS, NUMERICAL_COLS, TARGET_COL
 from src.utility.constants import (
     DP_EPSILONS,
     DP_PREPROCESSOR_EPS_FRACTION,
     DP_SYNTHESIZERS,
-    PROCESSED_DATA_DIR,
     RANDOM_STATE,
-    SYNTHETIC_DATA_DIR,
-    SYNTHETIC_TRAIN_FILENAME,
     TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import set_random_seeds
-
-# ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT_NAME = "synthesize_dp.py"
 
@@ -63,68 +65,21 @@ CONTINUOUS_COLS = [c for c in NUMERICAL_COLS if c not in ORDINAL_COLS]
 CATEGORICAL_COLS_WITH_TARGET = CATEGORICAL_COLS + [TARGET_COL]
 
 
-# ── Path helpers ──────────────────────────────────────────────────────────────
-
-
-def _training_data_path() -> Path:
-    """Return the canonical path to the real training split."""
-    return PROCESSED_DATA_DIR / TRAIN_FILENAME
-
-
-def _output_dir(synthesizer_name: str, epsilon: float) -> Path:
-    """
-    Return the output directory for a given synthesizer and epsilon value.
-
-    Uses 'eps_{epsilon}' as the canonical subdirectory name to mirror the
-    non-DP pipeline's 'default' subdirectory and keep each run isolated.
-
-    Args:
-        synthesizer_name: One of 'dpctgan', 'patectgan'.
-        epsilon: Privacy budget value.
-
-    Returns:
-        Path to the output directory.
-    """
-    return SYNTHETIC_DATA_DIR / synthesizer_name / f"eps_{epsilon}"
-
-
-def _synthetic_output_path(synthesizer_name: str, epsilon: float) -> Path:
-    """
-    Return the canonical synthetic output CSV path for a DP synthesizer run.
-    """
-    return _output_dir(synthesizer_name, epsilon) / SYNTHETIC_TRAIN_FILENAME
-
-
 def _run_name(synthesizer_name: str, epsilon: float) -> str:
     """Return a consistent run name for logging."""
     return f"synthesizer_{synthesizer_name}_eps_{epsilon}"
 
 
-# ── Data loading and validation ───────────────────────────────────────────────
+def load_training_data() -> pd.DataFrame:
+    """Load the real training split from disk."""
+    train_path = processed_split_path(TRAIN_FILENAME)
+    train_df = load_csv(train_path, "Training split")
 
-
-def _load_training_data() -> pd.DataFrame:
-    """
-    Load the real training split from disk.
-
-    Returns:
-        Training DataFrame.
-
-    Raises:
-        FileNotFoundError: If the canonical training split does not exist.
-    """
-    train_path = _training_data_path()
-    if not train_path.exists():
-        raise FileNotFoundError(
-            f"Training split not found at {train_path}. "
-            "Run the dataset cleaning and splitting pipeline first."
-        )
-
-    train_df = pd.read_csv(train_path)
     print(
         f"[synthesize_dp] Loaded training data from {train_path.resolve()} "
         f"({len(train_df)} rows)"
     )
+
     return train_df
 
 
@@ -150,38 +105,22 @@ def _validate_epsilon_settings(epsilon: float, preprocessor_eps: float) -> None:
         )
 
 
-def _validate_synthetic_output(
+def validate_synthetic_output(
     train_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
     expected_rows: int,
 ) -> None:
-    """
-    Validate the generated synthetic dataset before saving.
-
-    Args:
-        train_df: Real training DataFrame used to fit the synthesizer.
-        synthetic_df: Generated synthetic DataFrame.
-        expected_rows: Expected number of synthetic rows.
-
-    Raises:
-        ValueError: If row count or columns do not match expectations.
-    """
+    """Validate generated synthetic data before saving."""
     if len(synthetic_df) != expected_rows:
         raise ValueError(
             f"Synthetic data has {len(synthetic_df)} rows, expected {expected_rows}."
         )
 
-    train_columns = list(train_df.columns)
-    synthetic_columns = list(synthetic_df.columns)
-    if synthetic_columns != train_columns:
-        raise ValueError(
-            "Synthetic data columns do not match training data columns.\n"
-            f"Expected: {train_columns}\n"
-            f"Actual:   {synthetic_columns}"
-        )
-
-
-# ── Synthesizer ───────────────────────────────────────────────────────────────
+    validate_matching_columns(
+        reference_df=train_df,
+        candidate_df=synthetic_df,
+        candidate_name="Synthetic data",
+    )
 
 
 def build_dp_synthesizer(
@@ -215,9 +154,6 @@ def build_dp_synthesizer(
         cuda=cuda,
         verbose=False,
     )
-
-
-# ── Train and generate ────────────────────────────────────────────────────────
 
 
 def train_and_generate(
@@ -258,7 +194,10 @@ def train_and_generate(
     gpu_available = torch.cuda.is_available()
     gpu_in_use = cuda and gpu_available
 
-    data_source = f"{synthesizer_name}/eps_{epsilon}"
+    data_source = build_data_source_key(
+        synthesizer_name=synthesizer_name,
+        epsilon=epsilon,
+    )
     parameters = {
         "pipeline_stage": "synthesis",
         "evaluation": None,
@@ -284,7 +223,7 @@ def train_and_generate(
         use_wandb=use_wandb,
         category="synthesis",
     ) as logger:
-        train_df = _load_training_data()
+        train_df = load_training_data()
         n_samples = len(train_df)
 
         print(
@@ -319,12 +258,18 @@ def train_and_generate(
 
         print(f"[synthesize_dp] Generating {n_samples} synthetic samples...")
         synthetic_df = synthesizer.sample(n_samples)
-        _validate_synthetic_output(train_df, synthetic_df, expected_rows=n_samples)
+        validate_synthetic_output(train_df, synthetic_df, expected_rows=n_samples)
 
-        out_dir = _output_dir(synthesizer_name, epsilon)
+        out_dir = synthetic_output_dir(
+            synthesizer_name,
+            mode=f"eps_{epsilon}",
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        synthetic_path = _synthetic_output_path(synthesizer_name, epsilon)
+        synthetic_path = synthetic_output_path(
+            synthesizer_name,
+            mode=f"eps_{epsilon}",
+        )
         synthetic_df.to_csv(synthetic_path, index=False)
         print(f"[synthesize_dp] Synthetic data saved to {synthetic_path.resolve()}")
 
@@ -337,9 +282,6 @@ def train_and_generate(
                 "synthetic_data_path": synthetic_path,
             }
         )
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 
 def main() -> None:
