@@ -1,18 +1,9 @@
 """
-evaluate_privacy.py
+Privacy evaluation for synthetic tabular data.
 
-Privacy evaluation for synthetic data using Anonymeter and SDMetrics.
-
-Runs four evaluations for each synthesizer:
-  - Singling Out: can an attacker uniquely identify a real person using
-    the synthetic data?
-  - Linkability: can an attacker link two records to the same person?
-  - Inference: can an attacker infer sensitive attributes (income, race,
-    sex, relationship) from known attributes?
-  - DCR Metrics: distance-based privacy metrics measuring whether synthetic
-    data is memorizing training records (SDMetrics)
-
-Results are always saved locally as JSON. W&B logging is optional.
+This module evaluates synthetic data against real training and holdout data
+using privacy attack metrics and distance-based privacy metrics, then logs the
+resulting privacy scores.
 
 Usage:
     # Without W&B (default)

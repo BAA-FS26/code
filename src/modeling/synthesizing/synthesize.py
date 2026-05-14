@@ -12,16 +12,16 @@ Supported synthesizers:
 
 Usage:
     # Without W&B (default)
-    python -m src.modeling.synthesize --synthesizer gaussian_copula
-    python -m src.modeling.synthesize --synthesizer ctgan
-    python -m src.modeling.synthesize --synthesizer tvae
+    python -m src.modeling.synthesizing.synthesize --synthesizer gaussian_copula
+    python -m src.modeling.synthesizing.synthesize --synthesizer ctgan
+    python -m src.modeling.synthesizing.synthesize --synthesizer tvae
 
     # With W&B logging
-    python -m src.modeling.synthesize --synthesizer ctgan --wandb
+    python -m src.modeling.synthesizing.synthesize --synthesizer ctgan --wandb
 
     # With GPU acceleration (CTGAN and TVAE only)
-    python -m src.modeling.synthesize --synthesizer ctgan --cuda
-    python -m src.modeling.synthesize --synthesizer ctgan --cuda --wandb
+    python -m src.modeling.synthesizing.synthesize --synthesizer ctgan --cuda
+    python -m src.modeling.synthesizing.synthesize --synthesizer ctgan --cuda --wandb
 """
 
 import argparse

@@ -1,22 +1,8 @@
 """
-evaluate_fidelity.py
+Fidelity evaluation for synthetic tabular data.
 
-Fidelity evaluation for synthetic data using standalone SDMetrics.
-
-SDMetrics is model-agnostic and evaluates synthetic data independently
-of how it was generated. This ensures the evaluation pipeline is
-reproducible and applicable to any synthesizer, not just SDV models.
-
-Runs two reports for each synthesizer:
-  - QualityReport: measures statistical similarity between synthetic and
-    real data across two dimensions:
-      * Column Shapes: univariate distribution similarity per feature
-      * Column Pair Trends: bivariate correlation similarity
-  - DiagnosticReport: checks synthetic data validity, including
-    out-of-range values and invalid categories
-
-Results are always saved locally as JSON. W&B logging is optional.
-Per-column scores are logged as W&B tables when W&B is enabled.
+This module compares synthetic data against real training data using SDMetrics
+quality and diagnostic reports, then logs the resulting fidelity metrics.
 
 Usage:
     # Without W&B (default)
@@ -174,6 +160,7 @@ def run_quality_report(
                 f"{property_name}: {exc}"
             )
 
+
 def run_diagnostic_report(
     real_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
@@ -293,6 +280,7 @@ def evaluate_fidelity(
         run_diagnostic_report(real_df, synthetic_df, metadata, logger)
 
         print("[evaluate_fidelity] Fidelity evaluation complete.")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

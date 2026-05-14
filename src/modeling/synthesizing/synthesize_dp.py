@@ -11,20 +11,20 @@ Supported synthesizers:
 
 Usage:
     # Without W&B (default)
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 1.0
-    python -m src.modeling.synthesize_dp --synthesizer patectgan --epsilon 1.0
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 1.0
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer patectgan --epsilon 1.0
 
     # All epsilon values
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 0.1
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 1.0
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 5.0
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 10.0
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 0.1
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 1.0
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 5.0
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 10.0
 
     # With GPU acceleration
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 1.0 --cuda
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 1.0 --cuda
 
     # With W&B logging
-    python -m src.modeling.synthesize_dp --synthesizer dpctgan --epsilon 1.0 --wandb
+    python -m src.modeling.synthesizing.synthesize_dp --synthesizer dpctgan --epsilon 1.0 --wandb
 """
 
 import argparse
