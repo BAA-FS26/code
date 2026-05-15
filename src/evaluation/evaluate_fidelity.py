@@ -19,24 +19,21 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
 
 import pandas as pd
 from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
 
+from src.core.data_source import build_data_source_key
+from src.evaluation.evaluation_data import load_fidelity_datasets
 from src.utility.constants import (
     DP_EPSILONS,
     DP_SYNTHESIZERS,
     RANDOM_STATE,
     SYNTHESIZER_MODELS_DIR,
     SYNTHESIZERS,
-    TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import build_adult_sdmetrics_metadata, load_metadata
-from src.core.data_source import build_data_source_key
-from src.core.io import load_csv, validate_matching_columns
-from src.core.paths import processed_split_path, synthetic_train_path
 
 SCRIPT_NAME = "evaluate_fidelity.py"
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
@@ -44,58 +41,40 @@ MODELS_DIR = SYNTHESIZER_MODELS_DIR
 
 def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
     """
-    Extract a single property score from an SDMetrics properties dataframe.
-
-    Raises:
-        ValueError: If the requested property is not present.
+    Extract a single property score from an SDMetrics properties DataFrame.
     """
     matches = properties.loc[properties["Property"] == property_name, "Score"]
+
     if matches.empty:
         available = properties["Property"].tolist() if "Property" in properties else []
+
         raise ValueError(
             f"Expected SDMetrics property '{property_name}' not found. "
             f"Available properties: {available}"
         )
+
     return float(matches.iloc[0])
 
 
-def load_data(
-    synthesizer_name: str,
-    epsilon: float | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path]:
+def _log_report_details(
+    report,
+    property_name: str,
+    table_key: str,
+    logger: RunLogger,
+    context: str,
+) -> None:
     """
-    Load real training data and synthetic data for a given synthesizer.
-
-    For non-DP synthesizers, data is loaded from:
-        data/synthetic/{name}/default/synthetic_train.csv
-
-    For DP synthesizers, data is loaded from:
-        data/synthetic/{name}/eps_{epsilon}/synthetic_train.csv
-
-    Args:
-        synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae',
-                          'dpctgan', or 'patectgan'.
-        epsilon: Privacy budget for DP synthesizers. Must be None for
-                 non-DP synthesizers.
-
-    Returns:
-        Tuple of (real_train_df, synthetic_df, real_path, synthetic_path).
+    Log detailed SDMetrics report output as a table artifact when available.
     """
-    data_source = build_data_source_key(synthesizer_name, epsilon)
+    try:
+        details = report.get_details(property_name=property_name)
+        logger.log_table(table_key, details)
 
-    real_path = processed_split_path(TRAIN_FILENAME)
-    synthetic_path = synthetic_train_path(data_source)
-
-    real_df = load_csv(real_path, "Real training split")
-    synthetic_df = load_csv(synthetic_path, "Synthetic training data")
-
-    validate_matching_columns(
-        reference_df=real_df,
-        candidate_df=synthetic_df,
-        candidate_name="Synthetic training data",
-    )
-
-    return real_df, synthetic_df, real_path, synthetic_path
+    except Exception as exc:
+        print(
+            f"[evaluate_fidelity] Could not log {context} details for "
+            f"{property_name}: {exc}"
+        )
 
 
 def run_quality_report(
@@ -105,30 +84,24 @@ def run_quality_report(
     logger: RunLogger,
 ) -> None:
     """
-    Run SDMetrics QualityReport and log results via the run logger.
+    Run SDMetrics QualityReport and log fidelity scores.
 
-    Evaluates two dimensions:
-    - Column Shapes: univariate distribution similarity per feature
-    - Column Pair Trends: bivariate correlation similarity
-
-    Overall and per-dimension scores are logged as summary metrics.
-    Per-column scores are logged as W&B tables when W&B is enabled.
-
-    Args:
-        real_df: Real training DataFrame.
-        synthetic_df: Synthetic DataFrame.
-        metadata: SDV/SDMetrics metadata dictionary.
-        logger: Active RunLogger instance.
+    Logged keys are intentionally stable for dashboard/result compatibility:
+    - quality_overall
+    - quality_column_shapes
+    - quality_column_pair_trends
     """
     print("[evaluate_fidelity] Running QualityReport...")
+
     report = QualityReport()
     report.generate(real_df, synthetic_df, metadata)
 
     overall_score_raw = report.get_score()
+
     if overall_score_raw is None:
         raise ValueError("QualityReport returned no overall score.")
-    overall_score = float(overall_score_raw)
 
+    overall_score = float(overall_score_raw)
     properties = report.get_properties()
 
     column_shapes_score = _get_property_score(properties, "Column Shapes")
@@ -149,16 +122,21 @@ def run_quality_report(
         }
     )
 
-    for property_name in ["Column Shapes", "Column Pair Trends"]:
-        try:
-            details = report.get_details(property_name=property_name)
-            table_key = f"quality_{property_name.lower().replace(' ', '_')}_details"
-            logger.log_table(table_key, details)
-        except Exception as exc:
-            print(
-                f"[evaluate_fidelity] Could not log details for "
-                f"{property_name}: {exc}"
-            )
+    _log_report_details(
+        report=report,
+        property_name="Column Shapes",
+        table_key="quality_column_shapes_details",
+        logger=logger,
+        context="quality",
+    )
+
+    _log_report_details(
+        report=report,
+        property_name="Column Pair Trends",
+        table_key="quality_column_pair_trends_details",
+        logger=logger,
+        context="quality",
+    )
 
 
 def run_diagnostic_report(
@@ -168,71 +146,58 @@ def run_diagnostic_report(
     logger: RunLogger,
 ) -> None:
     """
-    Run SDMetrics DiagnosticReport and log results via the run logger.
-
-    Checks synthetic data validity including:
-    - Data Validity: boundary adherence, range coverage, category coverage
-    - Data Structure: whether synthetic data has the correct columns
-
-    Args:
-        real_df: Real training DataFrame.
-        synthetic_df: Synthetic DataFrame.
-        metadata: SDV/SDMetrics metadata dictionary.
-        logger: Active RunLogger instance.
+    Run SDMetrics DiagnosticReport and log validity/structure scores.
     """
     print("[evaluate_fidelity] Running DiagnosticReport...")
+
     report = DiagnosticReport()
     report.generate(real_df, synthetic_df, metadata)
 
     metrics: dict[str, float] = {}
 
     diagnostic_overall_raw = report.get_score()
+
     if diagnostic_overall_raw is not None:
         metrics["diagnostic_overall"] = float(diagnostic_overall_raw)
+
         print(
             f"[evaluate_fidelity] Overall Diagnostic Score: "
             f"{metrics['diagnostic_overall']:.4f}"
         )
 
     properties = report.get_properties()
+
     for _, row in properties.iterrows():
         key = f"diagnostic_{row['Property'].lower().replace(' ', '_')}"
-        metrics[key] = float(row["Score"])
-        print(f"[evaluate_fidelity] {row['Property']}: {float(row['Score']):.4f}")
+        score = float(row["Score"])
+
+        metrics[key] = score
+
+        print(f"[evaluate_fidelity] {row['Property']}: {score:.4f}")
 
     logger.log(metrics)
 
-    try:
-        details = report.get_details(property_name="Data Validity")
-        logger.log_table("diagnostic_data_validity_details", details)
-    except Exception as exc:
-        print(f"[evaluate_fidelity] Could not log diagnostic details: {exc}")
+    _log_report_details(
+        report=report,
+        property_name="Data Validity",
+        table_key="diagnostic_data_validity_details",
+        logger=logger,
+        context="diagnostic",
+    )
 
 
-def evaluate_fidelity(
+def _build_run_parameters(
     synthesizer_name: str,
-    epsilon: float | None = None,
-    use_wandb: bool = False,
-) -> None:
+    epsilon: float | None,
+    data_source: str,
+    use_wandb: bool,
+) -> dict:
     """
-    Run full fidelity evaluation for a synthesizer.
+    Build logger metadata for fidelity evaluation.
 
-    Runs both QualityReport and DiagnosticReport against the synthetic
-    data generated by the given synthesizer, comparing against real
-    training data. Results are always saved locally. W&B logging is
-    optional.
-
-    Args:
-        synthesizer_name: One of 'gaussian_copula', 'ctgan', 'tvae',
-                          'dpctgan', or 'patectgan'.
-        epsilon: Privacy budget for DP synthesizers. Must be None for
-                 non-DP synthesizers.
-        use_wandb: Whether to log results to W&B. Defaults to False.
+    Field names are intentionally stable for result compatibility.
     """
-    data_source = build_data_source_key(synthesizer_name, epsilon)
-    run_name = f"eval_fidelity_{data_source.replace('/', '_')}"
-
-    parameters = {
+    return {
         "pipeline_stage": "evaluation",
         "evaluation": "fidelity",
         "mode": "default" if epsilon is None else f"eps_{epsilon}",
@@ -247,6 +212,25 @@ def evaluate_fidelity(
         "metadata_key": synthesizer_name,
     }
 
+
+def evaluate_fidelity(
+    synthesizer_name: str,
+    epsilon: float | None = None,
+    use_wandb: bool = False,
+) -> None:
+    """
+    Run full fidelity evaluation for a synthesizer.
+    """
+    data_source = build_data_source_key(synthesizer_name, epsilon)
+    run_name = f"eval_fidelity_{data_source.replace('/', '_')}"
+
+    parameters = _build_run_parameters(
+        synthesizer_name=synthesizer_name,
+        epsilon=epsilon,
+        data_source=data_source,
+        use_wandb=use_wandb,
+    )
+
     with RunLogger(
         run_name=run_name,
         script_name=SCRIPT_NAME,
@@ -254,10 +238,8 @@ def evaluate_fidelity(
         use_wandb=use_wandb,
         category="fidelity",
     ) as logger:
-        real_df, synthetic_df, real_path, synthetic_path = load_data(
-            synthesizer_name=synthesizer_name,
-            epsilon=epsilon,
-        )
+        real_df, synthetic_df, paths = load_fidelity_datasets(data_source)
+
         metadata = load_metadata(
             MODELS_DIR,
             synthesizer_name,
@@ -269,8 +251,8 @@ def evaluate_fidelity(
 
         logger.log(
             {
-                "real_data_path": real_path,
-                "synthetic_data_path": synthetic_path,
+                "real_data_path": paths["real_train_path"],
+                "synthetic_data_path": paths["synthetic_path"],
                 "n_rows_real_train": len(real_df),
                 "n_rows_synthetic": len(synthetic_df),
             }
@@ -286,12 +268,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate fidelity of synthetic data using SDMetrics."
     )
+
     parser.add_argument(
         "--synthesizer",
         choices=SYNTHESIZERS | DP_SYNTHESIZERS,
         required=True,
         help="Synthesizer to evaluate.",
     )
+
     parser.add_argument(
         "--epsilon",
         type=float,
@@ -299,6 +283,7 @@ def main() -> None:
         default=None,
         help="Privacy budget for DP synthesizers. Required for dpctgan/patectgan.",
     )
+
     parser.add_argument(
         "--wandb",
         action="store_true",

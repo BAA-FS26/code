@@ -18,112 +18,74 @@ Usage:
 
 import argparse
 import pickle
+from pathlib import Path
 from typing import Any
-
-import pandas as pd
 
 from src.core.data_source import (
     epsilon_from_data_source,
     resolve_training_data_source,
     synthesizer_from_data_source,
 )
-from src.core.io import load_csv
-from src.core.paths import classifier_model_path, processed_split_path
-from src.dataset.feature_engineering import prepare_data, prepare_data_gradient_boosting
+from src.core.paths import classifier_model_path
+from src.evaluation.evaluation_data import load_utility_test_dataset
 from src.evaluation.metrics import compute_classification_metrics
+from src.modeling.classification.classifier_data import prepare_single
 from src.utility.constants import (
     CLASSIFIERS,
     DP_EPSILONS,
     DP_SYNTHESIZERS,
     RANDOM_STATE,
     SYNTHESIZERS,
-    TEST_FILENAME,
 )
 from src.utility.logger import RunLogger
 
 SCRIPT_NAME = "evaluate_utility.py"
 
 
-def load_test() -> pd.DataFrame:
-    """
-    Load the real held-out test split.
-
-    Always loads real test data regardless of the training data source.
-    This implements the TSTR setup: train on synthetic, test on real.
-    """
-    test_path = processed_split_path(TEST_FILENAME)
-    test_df = load_csv(test_path, "Test split")
-    print(f"[evaluate_utility] Loaded test data ({len(test_df)} rows)")
-    return test_df
-
-
-def prepare_test_features(
-    classifier_name: str,
-    test_df: pd.DataFrame,
-    preprocessor: Any,
-) -> tuple[Any, Any]:
-    """
-    Apply saved-model preprocessing to the held-out test split.
-
-    This mirrors the preprocessing used during training without importing from
-    the training CLI module. Logistic Regression and Random Forest reuse the
-    fitted preprocessor stored with the model. Gradient Boosting uses the
-    Adult-specific categorical dtype preparation because it handles categorical
-    features natively.
-    """
-    if classifier_name == "gradient_boosting":
-        return prepare_data_gradient_boosting(test_df)
-
-    if preprocessor is None:
-        raise ValueError(
-            f"Saved model for classifier '{classifier_name}' is missing a preprocessor."
-        )
-
-    return prepare_data(preprocessor, test_df)
-
-
-def load_saved_model(
-    classifier_name: str,
-    data_source: str,
-    model_type: str,
-) -> tuple[Any, Any, dict[str, Any], object]:
-    """
-    Load and validate a saved classifier payload.
-
-    Args:
-        classifier_name: Classifier identifier.
-        data_source: Canonical data-source key, e.g. real or dpctgan/eps_1.0.
-        model_type: Saved model variant, usually default or best.
-
-    Returns:
-        Tuple of (model, preprocessor, metadata, model_path).
-    """
-    model_path = classifier_model_path(classifier_name, data_source, model_type)
+def _read_model_payload(model_path: Path) -> dict[str, Any]:
+    """Read a saved classifier payload from disk."""
     if not model_path.exists():
         raise FileNotFoundError(
             f"No saved model found at {model_path}. "
-            "Run src.modeling.classify with --mode default or --mode best first."
+            "Run src.modeling.classification.classify with --mode default "
+            "or --mode best first."
         )
 
-    with open(model_path, "rb") as f:
-        saved = pickle.load(f)
+    with open(model_path, "rb") as file:
+        saved = pickle.load(file)
 
     if not isinstance(saved, dict):
         raise ValueError(
-            f"Saved model payload at {model_path} is invalid: expected dictionary."
+            f"Saved model payload at {model_path} is invalid: " "expected dictionary."
         )
 
+    return saved
+
+
+def _validate_payload_keys(
+    saved: dict[str, Any],
+    model_path: Path,
+) -> None:
+    """Validate that the saved payload contains the required top-level keys."""
     missing_keys = {"model", "preprocessor", "metadata"} - set(saved.keys())
+
     if missing_keys:
         raise ValueError(
             f"Saved model payload at {model_path} is missing required keys: "
             f"{sorted(missing_keys)}"
         )
 
-    metadata = saved["metadata"]
+
+def _validate_payload_metadata(
+    metadata: Any,
+    model_path: Path,
+    classifier_name: str,
+    data_source: str,
+) -> dict[str, Any]:
+    """Validate saved model metadata against the requested evaluation setup."""
     if not isinstance(metadata, dict):
         raise ValueError(
-            f"Saved model metadata at {model_path} is invalid: expected dictionary."
+            f"Saved model metadata at {model_path} is invalid: " "expected dictionary."
         )
 
     if metadata.get("classifier") != classifier_name:
@@ -138,37 +100,63 @@ def load_saved_model(
             f"expected '{data_source}', got '{metadata.get('data_source')}'."
         )
 
-    return saved["model"], saved["preprocessor"], metadata, model_path
+    return metadata
 
 
-def evaluate_utility(
+def load_saved_model(
     classifier_name: str,
     data_source: str,
     model_type: str,
-    use_wandb: bool = False,
-) -> None:
+) -> tuple[Any, Any, dict[str, Any], Path]:
     """
-    Evaluate a trained model on the real held-out test set.
+    Load and validate a saved classifier payload.
+
+    The payload format is intentionally kept compatible with models saved by
+    src.modeling.classification.classifier_training.
+
+    Args:
+        classifier_name: Classifier identifier.
+        data_source: Canonical data-source key, e.g. real or dpctgan/eps_1.0.
+        model_type: Saved model variant, usually default or best.
+
+    Returns:
+        Tuple of (model, preprocessor, metadata, model_path).
     """
-    model, preprocessor, metadata, model_path = load_saved_model(
+    model_path = classifier_model_path(
+        classifier_name,
+        data_source,
+        model_type,
+    )
+
+    saved = _read_model_payload(model_path)
+    _validate_payload_keys(saved, model_path)
+
+    metadata = _validate_payload_metadata(
+        metadata=saved["metadata"],
+        model_path=model_path,
         classifier_name=classifier_name,
         data_source=data_source,
-        model_type=model_type,
     )
 
-    params = metadata.get("params", {})
-    random_state = (
-        params.get("seed", RANDOM_STATE) if isinstance(params, dict) else RANDOM_STATE
-    )
+    return saved["model"], saved["preprocessor"], metadata, model_path
 
-    test_df = load_test()
-    X_test, y_test = prepare_test_features(classifier_name, test_df, preprocessor)
 
-    run_name = (
-        f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}_{model_type}"
-    )
-    parameters = {
-        "pipeline_stage": "utility",
+def _build_run_parameters(
+    classifier_name: str,
+    data_source: str,
+    model_type: str,
+    params: Any,
+    random_state: int,
+    use_wandb: bool,
+    model_path: Path,
+) -> dict[str, Any]:
+    """
+    Build logger metadata for held-out utility evaluation.
+
+    Field names are intentionally stable for result compatibility.
+    """
+    return {
+        "pipeline_stage": "evaluation",
         "evaluation": "utility",
         "mode": "test",
         "data_source": data_source,
@@ -182,6 +170,52 @@ def evaluate_utility(
         "model_path": model_path,
     }
 
+
+def evaluate_utility(
+    classifier_name: str,
+    data_source: str,
+    model_type: str,
+    use_wandb: bool = False,
+) -> None:
+    """
+    Evaluate a trained classifier on the real held-out test split.
+
+    Utility is evaluated in a TSTR setup for synthetic sources:
+    Train on Synthetic, Test on Real.
+    """
+    model, preprocessor, metadata, model_path = load_saved_model(
+        classifier_name=classifier_name,
+        data_source=data_source,
+        model_type=model_type,
+    )
+
+    params = metadata.get("params", {})
+    random_state = (
+        params.get("seed", RANDOM_STATE) if isinstance(params, dict) else RANDOM_STATE
+    )
+
+    test_df, test_path = load_utility_test_dataset()
+
+    X_test, y_test = prepare_single(
+        classifier_name=classifier_name,
+        df=test_df,
+        preprocessor=preprocessor,
+    )
+
+    run_name = (
+        f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}_{model_type}"
+    )
+
+    parameters = _build_run_parameters(
+        classifier_name=classifier_name,
+        data_source=data_source,
+        model_type=model_type,
+        params=params,
+        random_state=random_state,
+        use_wandb=use_wandb,
+        model_path=model_path,
+    )
+
     print(
         f"[evaluate_utility] Evaluating saved {classifier_name} model on real "
         f"test data for source '{data_source}' with '{model_type}' hyperparameters"
@@ -194,9 +228,15 @@ def evaluate_utility(
         use_wandb=use_wandb,
         category="utility",
     ) as logger:
-        logger.log(
-            compute_classification_metrics(y_test, model.predict(X_test), prefix="test")
+        test_predictions = model.predict(X_test)
+
+        test_metrics = compute_classification_metrics(
+            y_test,
+            test_predictions,
+            prefix="test",
         )
+
+        logger.log(test_metrics)
 
 
 def main() -> None:
