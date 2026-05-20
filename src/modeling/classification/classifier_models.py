@@ -1,33 +1,29 @@
 """
 Classifier model factory for the synthetic data utility pipeline.
-
-This module builds the supported scikit-learn classifiers from parameter
-dictionaries used by default, sweep, and best-parameter training runs.
-
-Supported classifiers:
-  - logistic_regression
-  - random_forest
-  - gradient_boosting
 """
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import (
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
 from sklearn.linear_model import LogisticRegression
 
 from src.utility.constants import RANDOM_STATE
 
 N_ESTIMATORS_RF = 300
 
+ClassifierModel: TypeAlias = (
+    LogisticRegression | RandomForestClassifier | HistGradientBoostingClassifier
+)
+
 
 def _normalize_max_depth(value: Any) -> int | None:
     """
     Normalize Random Forest max_depth values loaded from YAML or W&B configs.
-
-    Sweep configurations may serialize None values as the string "None".
-    This helper converts both None and "None" to Python None while ensuring
-    numeric values are returned as integers.
     """
     if value in (None, "None"):
         return None
@@ -40,10 +36,8 @@ def _build_logistic_regression(
     seed: int,
 ) -> LogisticRegression:
     """Build a Logistic Regression classifier."""
-    regularization_strength = params.get("C", 1.0)
-
     return LogisticRegression(
-        C=regularization_strength,
+        C=params.get("C", 1.0),
         max_iter=1000,
         random_state=seed,
     )
@@ -54,15 +48,11 @@ def _build_random_forest(
     seed: int,
 ) -> RandomForestClassifier:
     """Build a Random Forest classifier."""
-    max_features = params.get("max_features", "sqrt")
-    min_samples_leaf = params.get("min_samples_leaf", 1)
-    max_depth = _normalize_max_depth(params.get("max_depth"))
-
     return RandomForestClassifier(
         n_estimators=N_ESTIMATORS_RF,
-        max_features=max_features,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,
+        max_features=params.get("max_features", "sqrt"),
+        min_samples_leaf=params.get("min_samples_leaf", 1),
+        max_depth=_normalize_max_depth(params.get("max_depth")),
         random_state=seed,
         n_jobs=-1,
     )
@@ -72,65 +62,36 @@ def _build_gradient_boosting(
     params: dict[str, Any],
     seed: int,
 ) -> HistGradientBoostingClassifier:
-    """
-    Build a HistGradientBoostingClassifier.
-
-    HistGradientBoostingClassifier natively handles missing values and
-    categorical features when categorical columns are provided with the
-    pandas categorical dtype.
-    """
-    learning_rate = params.get("learning_rate", 0.1)
-    max_leaf_nodes = params.get("max_leaf_nodes", 31)
-    min_samples_leaf = params.get("min_samples_leaf", 20)
-
+    """Build a HistGradientBoostingClassifier."""
     return HistGradientBoostingClassifier(
-        learning_rate=learning_rate,
-        max_leaf_nodes=max_leaf_nodes,
-        min_samples_leaf=min_samples_leaf,
-        early_stopping=True,
+        learning_rate=params.get("learning_rate", 0.1),
+        max_leaf_nodes=params.get("max_leaf_nodes", 31),
         random_state=seed,
-        categorical_features="from_dtype",
     )
-
-
-MODEL_BUILDERS = {
-    "logistic_regression": _build_logistic_regression,
-    "random_forest": _build_random_forest,
-    "gradient_boosting": _build_gradient_boosting,
-}
 
 
 def build_model(
     classifier_name: str,
-    params: dict[str, Any],
-) -> Any:
+    params: dict[str, Any] | None = None,
+    seed: int = RANDOM_STATE,
+) -> ClassifierModel:
     """
-    Build a classifier instance from a parameter dictionary.
-
-    Args:
-        classifier_name: One of:
-            - logistic_regression
-            - random_forest
-            - gradient_boosting
-        params: Dictionary of hyperparameters.
-
-    Returns:
-        Unfitted scikit-learn classifier instance.
-
-    Raises:
-        ValueError:
-            If classifier_name is not recognised.
+    Build a supported classifier from a parameter dictionary.
     """
-    current_seed = params.get("seed", RANDOM_STATE)
+    params = params or {}
 
-    builder = MODEL_BUILDERS.get(classifier_name)
+    builders: dict[str, Callable] = {
+        "logistic_regression": _build_logistic_regression,
+        "random_forest": _build_random_forest,
+        "gradient_boosting": _build_gradient_boosting,
+    }
+
+    builder = builders.get(classifier_name)
 
     if builder is None:
-        available = sorted(MODEL_BUILDERS.keys())
-
         raise ValueError(
-            f"Unknown classifier '{classifier_name}'. "
-            f"Available classifiers: {available}"
+            f"Unsupported classifier '{classifier_name}'. "
+            f"Available classifiers: {sorted(builders)}"
         )
 
-    return builder(params, current_seed)
+    return builder(params, seed)

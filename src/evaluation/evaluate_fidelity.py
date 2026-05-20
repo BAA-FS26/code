@@ -1,8 +1,8 @@
 """
 Fidelity evaluation for synthetic tabular data.
 
-This module compares synthetic data against real training data using SDMetrics
-quality and diagnostic reports, then logs the resulting fidelity metrics.
+Compares synthetic data against real training data using SDMetrics quality and
+diagnostic reports, then logs the resulting Fidelity metrics.
 
 Usage:
     # Without W&B (default)
@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+from typing import Any
 
 import pandas as pd
 from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
@@ -40,14 +41,11 @@ MODELS_DIR = SYNTHESIZER_MODELS_DIR
 
 
 def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
-    """
-    Extract a single property score from an SDMetrics properties DataFrame.
-    """
+    """Extract a single property score from an SDMetrics properties table."""
     matches = properties.loc[properties["Property"] == property_name, "Score"]
 
     if matches.empty:
         available = properties["Property"].tolist() if "Property" in properties else []
-
         raise ValueError(
             f"Expected SDMetrics property '{property_name}' not found. "
             f"Available properties: {available}"
@@ -57,19 +55,16 @@ def _get_property_score(properties: pd.DataFrame, property_name: str) -> float:
 
 
 def _log_report_details(
-    report,
+    report: Any,
     property_name: str,
     table_key: str,
     logger: RunLogger,
     context: str,
 ) -> None:
-    """
-    Log detailed SDMetrics report output as a table artifact when available.
-    """
+    """Log detailed SDMetrics report output as a table artifact when available."""
     try:
         details = report.get_details(property_name=property_name)
         logger.log_table(table_key, details)
-
     except Exception as exc:
         print(
             f"[evaluate_fidelity] Could not log {context} details for "
@@ -80,24 +75,16 @@ def _log_report_details(
 def run_quality_report(
     real_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
-    metadata: dict,
+    metadata: dict[str, Any],
     logger: RunLogger,
 ) -> None:
-    """
-    Run SDMetrics QualityReport and log fidelity scores.
-
-    Logged keys are intentionally stable for dashboard/result compatibility:
-    - quality_overall
-    - quality_column_shapes
-    - quality_column_pair_trends
-    """
+    """Run SDMetrics QualityReport and log Fidelity quality scores."""
     print("[evaluate_fidelity] Running QualityReport...")
 
     report = QualityReport()
     report.generate(real_df, synthetic_df, metadata)
 
     overall_score_raw = report.get_score()
-
     if overall_score_raw is None:
         raise ValueError("QualityReport returned no overall score.")
 
@@ -129,7 +116,6 @@ def run_quality_report(
         logger=logger,
         context="quality",
     )
-
     _log_report_details(
         report=report,
         property_name="Column Pair Trends",
@@ -142,12 +128,10 @@ def run_quality_report(
 def run_diagnostic_report(
     real_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
-    metadata: dict,
+    metadata: dict[str, Any],
     logger: RunLogger,
 ) -> None:
-    """
-    Run SDMetrics DiagnosticReport and log validity/structure scores.
-    """
+    """Run SDMetrics DiagnosticReport and log diagnostic scores."""
     print("[evaluate_fidelity] Running DiagnosticReport...")
 
     report = DiagnosticReport()
@@ -156,10 +140,8 @@ def run_diagnostic_report(
     metrics: dict[str, float] = {}
 
     diagnostic_overall_raw = report.get_score()
-
     if diagnostic_overall_raw is not None:
         metrics["diagnostic_overall"] = float(diagnostic_overall_raw)
-
         print(
             f"[evaluate_fidelity] Overall Diagnostic Score: "
             f"{metrics['diagnostic_overall']:.4f}"
@@ -168,12 +150,12 @@ def run_diagnostic_report(
     properties = report.get_properties()
 
     for _, row in properties.iterrows():
-        key = f"diagnostic_{row['Property'].lower().replace(' ', '_')}"
+        property_name = str(row["Property"])
+        key = f"diagnostic_{property_name.lower().replace(' ', '_')}"
         score = float(row["Score"])
 
         metrics[key] = score
-
-        print(f"[evaluate_fidelity] {row['Property']}: {score:.4f}")
+        print(f"[evaluate_fidelity] {property_name}: {score:.4f}")
 
     logger.log(metrics)
 
@@ -191,12 +173,8 @@ def _build_run_parameters(
     epsilon: float | None,
     data_source: str,
     use_wandb: bool,
-) -> dict:
-    """
-    Build logger metadata for fidelity evaluation.
-
-    Field names are intentionally stable for result compatibility.
-    """
+) -> dict[str, Any]:
+    """Build stable logger metadata for Fidelity evaluation."""
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "fidelity",
@@ -218,9 +196,7 @@ def evaluate_fidelity(
     epsilon: float | None = None,
     use_wandb: bool = False,
 ) -> None:
-    """
-    Run full fidelity evaluation for a synthesizer.
-    """
+    """Run full Fidelity evaluation for a synthesizer."""
     data_source = build_data_source_key(synthesizer_name, epsilon)
     run_name = f"eval_fidelity_{data_source.replace('/', '_')}"
 
@@ -264,18 +240,17 @@ def evaluate_fidelity(
         print("[evaluate_fidelity] Fidelity evaluation complete.")
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate fidelity of synthetic data using SDMetrics."
     )
-
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
+        choices=sorted(SYNTHESIZERS | DP_SYNTHESIZERS),
         required=True,
         help="Synthesizer to evaluate.",
     )
-
     parser.add_argument(
         "--epsilon",
         type=float,
@@ -283,21 +258,24 @@ def main() -> None:
         default=None,
         help="Privacy budget for DP synthesizers. Required for dpctgan/patectgan.",
     )
-
     parser.add_argument(
         "--wandb",
         action="store_true",
         default=False,
-        help="Log results to Weights & Biases. Local JSON logging remains primary.",
+        help="Log results to W&B. Local JSON logging remains primary.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
 
     if args.synthesizer in DP_SYNTHESIZERS and args.epsilon is None:
-        parser.error("--epsilon is required for DP synthesizers.")
+        raise SystemExit("--epsilon is required for DP synthesizers.")
 
     if args.synthesizer not in DP_SYNTHESIZERS and args.epsilon is not None:
-        parser.error("--epsilon should only be used with DP synthesizers.")
+        raise SystemExit("--epsilon should only be used with DP synthesizers.")
 
     evaluate_fidelity(
         synthesizer_name=args.synthesizer,

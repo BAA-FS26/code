@@ -1,20 +1,11 @@
 """
-data_splitting.py
-
 Generic data pipeline utilities for tabular classification datasets.
 
 Handles stratified train/validation/test splitting and split verification.
-
-Dataset-specific logic (loading, cleaning, column definitions) belongs in
-the dataset adapter module — see src.dataset.adult_census.py for the
-Adult Census Income implementation.
-
-Usage:
-    from src.dataset.data_splitting import split_data, verify_stratification
+Dataset-specific logic belongs in dataset adapter modules.
 """
 
 from pathlib import Path
-from typing import Optional, Tuple, Union
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -28,14 +19,7 @@ from src.utility.constants import (
 
 
 def _validate_split_inputs(df: pd.DataFrame, target_col: str) -> None:
-    """
-    Validate that a DataFrame is ready for stratified train/val/test splitting.
-
-    Raises:
-        ValueError: If the DataFrame is empty, the target contains missing
-                    values, or any class has too few samples for stratification.
-        KeyError: If target_col is not present in df.
-    """
+    """Validate that a DataFrame is ready for stratified splitting."""
     if df.empty:
         raise ValueError("Cannot split an empty DataFrame.")
 
@@ -53,58 +37,45 @@ def _validate_split_inputs(df: pd.DataFrame, target_col: str) -> None:
 
     class_counts = df[target_col].value_counts(dropna=False)
     if (class_counts < 2).any():
-        too_small = class_counts[class_counts < 2].to_dict()
         raise ValueError(
             "Stratified splitting requires at least 2 samples per class. "
-            f"Classes with insufficient samples: {too_small}"
+            f"Classes with insufficient samples: "
+            f"{class_counts[class_counts < 2].to_dict()}"
         )
+
+
+def _save_split(split_df: pd.DataFrame, output_dir: Path, filename: str) -> None:
+    """Persist one split as CSV using the existing filename convention."""
+    split_df.to_csv(output_dir / filename, index=False)
+    print(
+        f"[data_pipeline] Saved {filename} ({len(split_df)} rows) "
+        f"to {output_dir.resolve()}"
+    )
 
 
 def split_data(
     df: pd.DataFrame,
     target_col: str,
-    output_dir: Union[str, Path],
-    random_state: Optional[int] = RANDOM_STATE,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Split a cleaned dataset into stratified train, validation and test sets.
-
-    Splits the dataset in a 60/20/20 ratio using stratified sampling to
-    preserve the class distribution of the target variable across all three
-    splits. Stratification is particularly important for imbalanced datasets.
-
-    The splits are saved as train.csv, validation.csv and test.csv in
-    output_dir and returned as DataFrames. Returned DataFrames match the
-    persisted CSV contents exactly, including reset integer indices.
-
-    The test set must remain untouched until final evaluation to prevent
-    data leakage.
-
-    Args:
-        df: Cleaned DataFrame ready for splitting.
-        target_col: Name of the target column to stratify on.
-        output_dir: Directory where the CSV splits will be saved.
-        random_state: Random seed for reproducibility. Defaults to 42.
-                      Pass None for non-deterministic splits.
-
-    Returns:
-        Tuple of (train_df, val_df, test_df) DataFrames.
-    """
+    output_dir: str | Path,
+    random_state: int | None = RANDOM_STATE,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split a cleaned dataset into stratified train, validation, and test sets."""
     _validate_split_inputs(df, target_col)
 
-    out_path = Path(output_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    train_val, test_df = train_test_split(
+    train_val_df, test_df = train_test_split(
         df,
         test_size=0.20,
         stratify=df[target_col],
         random_state=random_state,
     )
+
     train_df, val_df = train_test_split(
-        train_val,
+        train_val_df,
         test_size=0.25,
-        stratify=train_val[target_col],
+        stratify=train_val_df[target_col],
         random_state=random_state,
     )
 
@@ -112,16 +83,9 @@ def split_data(
     val_df = val_df.reset_index(drop=True)
     test_df = test_df.reset_index(drop=True)
 
-    for filename, split in [
-        (TRAIN_FILENAME, train_df),
-        (VALIDATION_FILENAME, val_df),
-        (TEST_FILENAME, test_df),
-    ]:
-        split.to_csv(out_path / filename, index=False)
-        print(
-            f"[data_pipeline] Saved {filename} ({len(split)} rows) "
-            f"to {out_path.resolve()}"
-        )
+    _save_split(train_df, output_path, TRAIN_FILENAME)
+    _save_split(val_df, output_path, VALIDATION_FILENAME)
+    _save_split(test_df, output_path, TEST_FILENAME)
 
     return train_df, val_df, test_df
 
@@ -132,23 +96,14 @@ def verify_stratification(
     test: pd.DataFrame,
     target_col: str,
 ) -> pd.DataFrame:
-    """
-    Verify that the target variable is consistently distributed across splits.
+    """Return target-class distributions for train, validation, and test splits."""
+    splits = {
+        "Train": train,
+        "Val": val,
+        "Test": test,
+    }
 
-    Args:
-        train: Training split DataFrame.
-        val: Validation split DataFrame.
-        test: Test split DataFrame.
-        target_col: Name of the target column to check.
-
-    Returns:
-        DataFrame showing the class distribution (%) for each split side by
-        side, useful for confirming stratification was applied correctly.
-
-    Raises:
-        KeyError: If target_col is missing from any split DataFrame.
-    """
-    for split_name, split_df in [("train", train), ("val", val), ("test", test)]:
+    for split_name, split_df in splits.items():
         if target_col not in split_df.columns:
             raise KeyError(
                 f"Target column '{target_col}' not found in {split_name} split. "
@@ -157,8 +112,11 @@ def verify_stratification(
 
     summary = pd.DataFrame(
         {
-            name: df[target_col].value_counts(normalize=True).mul(100).round(2)
-            for name, df in zip(["Train", "Val", "Test"], [train, val, test])
+            split_name: split_df[target_col]
+            .value_counts(normalize=True)
+            .mul(100)
+            .round(2)
+            for split_name, split_df in splits.items()
         }
     )
 

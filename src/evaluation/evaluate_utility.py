@@ -1,8 +1,8 @@
 """
-Held-out utility evaluation for trained classifiers.
+Held-out Utility evaluation for trained classifiers.
 
-This module loads saved classifier payloads, evaluates them on the real test
-split, and logs test-set utility metrics.
+Loads saved classifier payloads, evaluates them on the real held-out test
+split, and logs test-set Utility metrics.
 
 Usage:
 
@@ -56,7 +56,7 @@ def _read_model_payload(model_path: Path) -> dict[str, Any]:
 
     if not isinstance(saved, dict):
         raise ValueError(
-            f"Saved model payload at {model_path} is invalid: " "expected dictionary."
+            f"Saved model payload at {model_path} is invalid: expected dictionary."
         )
 
     return saved
@@ -85,7 +85,7 @@ def _validate_payload_metadata(
     """Validate saved model metadata against the requested evaluation setup."""
     if not isinstance(metadata, dict):
         raise ValueError(
-            f"Saved model metadata at {model_path} is invalid: " "expected dictionary."
+            f"Saved model metadata at {model_path} is invalid: expected dictionary."
         )
 
     if metadata.get("classifier") != classifier_name:
@@ -108,24 +108,11 @@ def load_saved_model(
     data_source: str,
     model_type: str,
 ) -> tuple[Any, Any, dict[str, Any], Path]:
-    """
-    Load and validate a saved classifier payload.
-
-    The payload format is intentionally kept compatible with models saved by
-    src.modeling.classification.classifier_training.
-
-    Args:
-        classifier_name: Classifier identifier.
-        data_source: Canonical data-source key, e.g. real or dpctgan/eps_1.0.
-        model_type: Saved model variant, usually default or best.
-
-    Returns:
-        Tuple of (model, preprocessor, metadata, model_path).
-    """
+    """Load and validate a saved classifier payload."""
     model_path = classifier_model_path(
-        classifier_name,
-        data_source,
-        model_type,
+        classifier_name=classifier_name,
+        data_source=data_source,
+        model_type=model_type,
     )
 
     saved = _read_model_payload(model_path)
@@ -150,11 +137,7 @@ def _build_run_parameters(
     use_wandb: bool,
     model_path: Path,
 ) -> dict[str, Any]:
-    """
-    Build logger metadata for held-out utility evaluation.
-
-    Field names are intentionally stable for result compatibility.
-    """
+    """Build stable logger metadata for held-out Utility evaluation."""
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "utility",
@@ -177,12 +160,7 @@ def evaluate_utility(
     model_type: str,
     use_wandb: bool = False,
 ) -> None:
-    """
-    Evaluate a trained classifier on the real held-out test split.
-
-    Utility is evaluated in a TSTR setup for synthetic sources:
-    Train on Synthetic, Test on Real.
-    """
+    """Evaluate a trained classifier on the real held-out test split."""
     model, preprocessor, metadata, model_path = load_saved_model(
         classifier_name=classifier_name,
         data_source=data_source,
@@ -203,7 +181,8 @@ def evaluate_utility(
     )
 
     run_name = (
-        f"eval_utility_{classifier_name}_{data_source.replace('/', '_')}_{model_type}"
+        f"eval_utility_{classifier_name}_"
+        f"{data_source.replace('/', '_')}_{model_type}"
     )
 
     parameters = _build_run_parameters(
@@ -231,15 +210,21 @@ def evaluate_utility(
         test_predictions = model.predict(X_test)
 
         test_metrics = compute_classification_metrics(
-            y_test,
-            test_predictions,
+            y_true=y_test,
+            y_pred=test_predictions,
             prefix="test",
         )
 
-        logger.log(test_metrics)
+        logger.log(
+            {
+                "test_data_path": test_path,
+                **test_metrics,
+            }
+        )
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate saved classifiers on the real held-out test split."
     )
@@ -257,7 +242,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
+        choices=sorted(SYNTHESIZERS | DP_SYNTHESIZERS),
         default=None,
         help="Synthetic data source used to train the saved model.",
     )
@@ -278,22 +263,27 @@ def main() -> None:
         "--wandb",
         action="store_true",
         default=False,
-        help="Log results to Weights & Biases. Local JSON logging remains primary.",
+        help="Log results to W&B. Local JSON logging remains primary.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+
     try:
-        resolved_data_source = resolve_training_data_source(
+        data_source = resolve_training_data_source(
             data_source=args.data_source,
             synthesizer=args.synthesizer,
             epsilon=args.epsilon,
         )
     except ValueError as exc:
-        parser.error(str(exc))
+        raise SystemExit(str(exc)) from exc
 
     evaluate_utility(
         classifier_name=args.classifier,
-        data_source=resolved_data_source,
+        data_source=data_source,
         model_type=args.model_type,
         use_wandb=args.wandb,
     )

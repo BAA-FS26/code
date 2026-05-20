@@ -1,8 +1,7 @@
 """
-synthesize_dp.py
-
 Differentially private synthesis pipeline for the Adult Census Income dataset.
-Trains a DP synthesizer on the real training data and generates a synthetic
+
+Trains a DP synthesizer on the real training split and generates a synthetic
 dataset of equal size for a given epsilon value.
 
 Supported synthesizers:
@@ -29,7 +28,6 @@ Usage:
 
 import argparse
 import time
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -43,11 +41,7 @@ from src.core.paths import (
     synthetic_output_dir,
     synthetic_output_path,
 )
-from src.dataset.adult_census import (
-    CATEGORICAL_COLS,
-    NUMERICAL_COLS,
-    TARGET_COL,
-)
+from src.dataset.adult_census import CATEGORICAL_COLS, NUMERICAL_COLS, TARGET_COL
 from src.utility.constants import (
     DP_EPSILONS,
     DP_PREPROCESSOR_EPS_FRACTION,
@@ -60,58 +54,43 @@ from src.utility.utils import set_random_seeds
 
 SCRIPT_NAME = "synthesize_dp.py"
 
-# SmartNoise uses these hints to select appropriate transformers per column.
 ORDINAL_COLS = ["education-num"]
 CONTINUOUS_COLS = [col for col in NUMERICAL_COLS if col not in ORDINAL_COLS]
 CATEGORICAL_COLS_WITH_TARGET = CATEGORICAL_COLS + [TARGET_COL]
 
 
-def _run_name(
-    synthesizer_name: str,
-    epsilon: float,
-) -> str:
-    """Return a consistent run name for logging."""
+def _run_name(synthesizer_name: str, epsilon: float) -> str:
+    """Return a stable run name for DP synthesis logging."""
     return f"synthesizer_{synthesizer_name}_eps_{epsilon}"
 
 
 def load_training_data() -> pd.DataFrame:
     """Load the real training split from disk."""
     train_path = processed_split_path(TRAIN_FILENAME)
-
-    train_df = load_csv(
-        train_path,
-        "Training split",
-    )
+    train_df = load_csv(train_path, "Training split")
 
     print(
-        f"[synthesize_dp] Loaded training data from "
-        f"{train_path.resolve()} "
+        f"[synthesize_dp] Loaded training data from {train_path.resolve()} "
         f"({len(train_df)} rows)"
     )
 
     return train_df
 
 
-def _validate_epsilon_settings(
-    epsilon: float,
-    preprocessor_eps: float,
-) -> None:
-    """
-    Validate epsilon-related settings for the DP synthesis run.
-    """
+def _validate_epsilon_settings(epsilon: float, preprocessor_eps: float) -> None:
+    """Validate epsilon and derived preprocessor epsilon settings."""
     if epsilon <= 0:
         raise ValueError(f"Epsilon must be positive, got {epsilon}.")
 
     if preprocessor_eps <= 0:
         raise ValueError(
-            "Derived preprocessor_eps must be positive, " f"got {preprocessor_eps}."
+            f"Derived preprocessor_eps must be positive, got {preprocessor_eps}."
         )
 
     if preprocessor_eps > epsilon:
         raise ValueError(
-            "Derived preprocessor_eps must be less than or equal "
-            f"to epsilon. Got preprocessor_eps={preprocessor_eps}, "
-            f"epsilon={epsilon}."
+            "Derived preprocessor_eps must be less than or equal to epsilon. "
+            f"Got preprocessor_eps={preprocessor_eps}, epsilon={epsilon}."
         )
 
 
@@ -123,8 +102,7 @@ def validate_synthetic_output(
     """Validate generated synthetic data before saving."""
     if len(synthetic_df) != expected_rows:
         raise ValueError(
-            f"Synthetic data has {len(synthetic_df)} rows, "
-            f"expected {expected_rows}."
+            f"Synthetic data has {len(synthetic_df)} rows, expected {expected_rows}."
         )
 
     validate_matching_columns(
@@ -134,26 +112,17 @@ def validate_synthetic_output(
     )
 
 
-def _validate_synthesizer_name(
+def build_dp_synthesizer(
     synthesizer_name: str,
-) -> None:
-    """Validate DP synthesizer selection."""
+    epsilon: float,
+    cuda: bool = False,
+) -> Any:
+    """Build a SmartNoise DP synthesizer instance."""
     if synthesizer_name not in DP_SYNTHESIZERS:
         raise ValueError(
             f"Unknown DP synthesizer '{synthesizer_name}'. "
             f"Choose from: {sorted(DP_SYNTHESIZERS)}"
         )
-
-
-def build_dp_synthesizer(
-    synthesizer_name: str,
-    epsilon: float,
-    cuda: bool = False,
-):
-    """
-    Build a SmartNoise DP synthesizer instance.
-    """
-    _validate_synthesizer_name(synthesizer_name)
 
     return Synthesizer.create(
         synthesizer_name,
@@ -163,39 +132,17 @@ def build_dp_synthesizer(
     )
 
 
-def print_gpu_info(cuda: bool) -> None:
-    """Print GPU availability and usage status."""
-    gpu_available = torch.cuda.is_available()
-    gpu_in_use = cuda and gpu_available
-
-    print(f"[synthesize_dp] GPU available: {gpu_available}")
-    print(f"[synthesize_dp] GPU requested: {cuda}")
-    print(f"[synthesize_dp] GPU in use: {gpu_in_use}")
-
-    if cuda and not gpu_available:
-        print(
-            "[synthesize_dp] Warning: --cuda was set but "
-            "no GPU is available. Falling back to CPU."
-        )
-
-
 def _build_run_parameters(
     synthesizer_name: str,
     epsilon: float,
+    preprocessor_eps: float,
+    data_source: str,
     cuda: bool,
+    gpu_available: bool,
+    gpu_in_use: bool,
     use_wandb: bool,
 ) -> dict[str, Any]:
-    """
-    Build logger metadata for DP synthesis runs.
-
-    IMPORTANT:
-    Keys must remain stable for dashboard/result compatibility.
-    """
-    data_source = build_data_source_key(
-        synthesizer_name=synthesizer_name,
-        epsilon=epsilon,
-    )
-
+    """Build stable logger metadata for DP synthesis."""
     return {
         "pipeline_stage": "synthesis",
         "evaluation": None,
@@ -208,36 +155,11 @@ def _build_run_parameters(
         "params": {},
         "random_state": RANDOM_STATE,
         "use_wandb": use_wandb,
-        "cuda": cuda,
-        "preprocessor_eps_fraction": DP_PREPROCESSOR_EPS_FRACTION,
+        "cuda_requested": cuda,
+        "gpu_available": gpu_available,
+        "gpu_in_use": gpu_in_use,
+        "preprocessor_eps": preprocessor_eps,
     }
-
-
-def _save_synthetic_data(
-    synthetic_df: pd.DataFrame,
-    synthesizer_name: str,
-    epsilon: float,
-) -> Path:
-    """Save generated synthetic data to disk."""
-    mode = f"eps_{epsilon}"
-
-    output_dir = synthetic_output_dir(
-        synthesizer_name=synthesizer_name,
-        mode=mode,
-    )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_path = synthetic_output_path(
-        synthesizer_name=synthesizer_name,
-        mode=mode,
-    )
-
-    synthetic_df.to_csv(output_path, index=False)
-
-    print(f"[synthesize_dp] Synthetic data saved to " f"{output_path.resolve()}")
-
-    return output_path
 
 
 def train_and_generate(
@@ -246,38 +168,54 @@ def train_and_generate(
     cuda: bool = False,
     use_wandb: bool = False,
 ) -> None:
-    """
-    Train a DP synthesizer on real training data and generate synthetic data.
-    """
-    set_random_seeds(RANDOM_STATE)
+    """Train a DP synthesizer and save generated synthetic data."""
+    preprocessor_eps = round(epsilon * DP_PREPROCESSOR_EPS_FRACTION, 6)
+    _validate_epsilon_settings(epsilon, preprocessor_eps)
 
-    preprocessor_eps = epsilon * DP_PREPROCESSOR_EPS_FRACTION
-
-    _validate_epsilon_settings(
-        epsilon=epsilon,
-        preprocessor_eps=preprocessor_eps,
-    )
-
-    run_name = _run_name(
+    data_source = build_data_source_key(
         synthesizer_name=synthesizer_name,
         epsilon=epsilon,
     )
 
+    gpu_available = torch.cuda.is_available()
+    gpu_in_use = cuda and gpu_available
+
+    parameters = _build_run_parameters(
+        synthesizer_name=synthesizer_name,
+        epsilon=epsilon,
+        preprocessor_eps=preprocessor_eps,
+        data_source=data_source,
+        cuda=cuda,
+        gpu_available=gpu_available,
+        gpu_in_use=gpu_in_use,
+        use_wandb=use_wandb,
+    )
+
     with RunLogger(
-        run_name=run_name,
+        run_name=_run_name(synthesizer_name, epsilon),
         script_name=SCRIPT_NAME,
-        parameters=_build_run_parameters(
-            synthesizer_name=synthesizer_name,
-            epsilon=epsilon,
-            cuda=cuda,
-            use_wandb=use_wandb,
-        ),
+        parameters=parameters,
         use_wandb=use_wandb,
         category="synthesis",
     ) as logger:
         train_df = load_training_data()
+        n_samples = len(train_df)
 
-        print_gpu_info(cuda=cuda)
+        print(
+            f"[synthesize_dp] Synthesizer: {synthesizer_name} | "
+            f"epsilon: {epsilon} | preprocessor_eps: {preprocessor_eps}"
+        )
+        print(f"[synthesize_dp] GPU available: {gpu_available}")
+        print(f"[synthesize_dp] GPU requested: {cuda}")
+        print(f"[synthesize_dp] GPU in use: {gpu_in_use}")
+
+        if cuda and not gpu_available:
+            print(
+                "[synthesize_dp] Warning: --cuda was set but no GPU is available. "
+                "Falling back to CPU."
+            )
+
+        set_random_seeds(RANDOM_STATE)
 
         synthesizer = build_dp_synthesizer(
             synthesizer_name=synthesizer_name,
@@ -285,65 +223,58 @@ def train_and_generate(
             cuda=cuda,
         )
 
-        print(
-            f"[synthesize_dp] Training "
-            f"{synthesizer_name} "
-            f"(epsilon={epsilon})..."
-        )
-
-        start_time = time.perf_counter()
+        print(f"[synthesize_dp] Training {synthesizer_name} (epsilon={epsilon})...")
+        start_time = time.time()
 
         synthesizer.fit(
             train_df,
             categorical_columns=CATEGORICAL_COLS_WITH_TARGET,
-            continuous_columns=CONTINUOUS_COLS,
             ordinal_columns=ORDINAL_COLS,
-            nullable=True,
+            continuous_columns=CONTINUOUS_COLS,
             preprocessor_eps=preprocessor_eps,
+            nullable=True,
         )
 
-        training_time_seconds = time.perf_counter() - start_time
+        training_time = time.time() - start_time
+        print(f"[synthesize_dp] Training complete in {training_time:.1f}s")
 
-        print(
-            "[synthesize_dp] Training completed in "
-            f"{training_time_seconds:.2f} seconds"
-        )
-
-        synthetic_df = synthesizer.sample(len(train_df))
+        print(f"[synthesize_dp] Generating {n_samples} synthetic samples...")
+        synthetic_df = synthesizer.sample(n_samples)
 
         validate_synthetic_output(
             train_df=train_df,
             synthetic_df=synthetic_df,
-            expected_rows=len(train_df),
+            expected_rows=n_samples,
         )
 
-        synthetic_data_path = _save_synthetic_data(
-            synthetic_df=synthetic_df,
-            synthesizer_name=synthesizer_name,
-            epsilon=epsilon,
-        )
+        mode = f"eps_{epsilon}"
+        output_dir = synthetic_output_dir(synthesizer_name, mode=mode)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        synthetic_path = synthetic_output_path(synthesizer_name, mode=mode)
+        synthetic_df.to_csv(synthetic_path, index=False)
+
+        print(f"[synthesize_dp] Synthetic data saved to {synthetic_path.resolve()}")
 
         logger.log(
             {
-                "training_time_seconds": training_time_seconds,
-                "n_samples_train": len(train_df),
+                "training_time_seconds": training_time,
+                "n_samples_train": n_samples,
                 "n_samples_synthetic": len(synthetic_df),
-                "n_features": train_df.shape[1],
-                "synthetic_data_path": str(synthetic_data_path),
-                "preprocessor_eps": preprocessor_eps,
+                "n_features": len(train_df.columns),
+                "synthetic_data_path": synthetic_path,
             }
         )
 
-        print("[synthesize_dp] Run completed successfully.")
 
-
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Train a DP synthesizer and generate synthetic data."
     )
     parser.add_argument(
         "--synthesizer",
-        choices=DP_SYNTHESIZERS,
+        choices=sorted(DP_SYNTHESIZERS),
         required=True,
         help="DP synthesizer to train.",
     )
@@ -364,10 +295,15 @@ def main() -> None:
         "--wandb",
         action="store_true",
         default=False,
-        help="Log results to Weights & Biases. Local JSON logging remains primary.",
+        help="Log results to W&B. Local JSON logging remains primary.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+
     train_and_generate(
         synthesizer_name=args.synthesizer,
         epsilon=args.epsilon,

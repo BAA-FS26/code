@@ -1,18 +1,18 @@
 """
 Weights & Biases sweep workflows for classifier hyperparameter tuning.
 
-This module runs validation-based hyperparameter sweeps and exports the best
-parameters to YAML configuration files for later training runs.
+Runs validation-based hyperparameter sweeps and exports the best parameters
+to YAML files for later best-model training.
 """
+
+from typing import Any, cast
+
+import yaml
 
 try:
     import wandb as _wandb
 except ImportError:
     _wandb = None
-
-from typing import Any, cast
-
-import yaml
 
 from src.core.paths import best_params_path
 from src.modeling.classification.classifier_training import train_and_validate
@@ -32,20 +32,63 @@ PARAM_ABBREVIATIONS = {
     "C": "C",
 }
 
+EXCLUDED_RUN_NAME_PARAMS = {"classifier", "seed"}
+SWEEP_SCORE_KEY = "val_f1_macro"
+
+
+def _require_wandb_support() -> Any:
+    """Validate W&B package availability and required environment config."""
+    if _wandb is None:
+        raise RuntimeError(
+            "The 'wandb' package is not installed, but a W&B mode was requested. "
+            "Install project dependencies including wandb to use sweep or fetch_best."
+        )
+
+    require_wandb_config()
+    return cast(Any, _wandb)
+
+
+def _load_sweep_config(classifier_name: str) -> dict[str, Any]:
+    """Load a classifier sweep config from config/sweep_{classifier}.yaml."""
+    config_path = CONFIG_DIR / f"sweep_{classifier_name}.yaml"
+
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Sweep configuration not found at {config_path}. "
+            "Ensure the corresponding sweep YAML file exists."
+        )
+
+    with open(config_path) as file:
+        sweep_config = yaml.safe_load(file)
+
+    if not isinstance(sweep_config, dict):
+        raise ValueError(
+            f"Sweep configuration at {config_path} must load as a dictionary."
+        )
+
+    return sweep_config
+
+
+def _build_sweep_run_name(
+    classifier_name: str,
+    data_source: str,
+    params: dict[str, Any],
+) -> str:
+    """Build a readable W&B sweep run name."""
+    param_str = "_".join(
+        f"{PARAM_ABBREVIATIONS.get(key, key)}={value}"
+        for key, value in params.items()
+        if key not in EXCLUDED_RUN_NAME_PARAMS
+    )
+
+    return f"{data_source}_{classifier_name}_sweep_{param_str}"
+
 
 def fetch_best_params(classifier_name: str, data_source: str) -> None:
-    """
-    Fetch the best hyperparameters from the latest W&B sweep and save
-    them to config/best_{classifier}_{data_source}.yaml.
-
-    Queries W&B for the run with the highest val_f1_macro among all sweep
-    runs for the given classifier and data source, then saves the
-    parameters to disk for use with --mode best.
-
-    Requires W&B to be configured.
-    """
+    """Fetch best W&B sweep params and save them as YAML."""
     wandb_module = _require_wandb_support()
     api = wandb_module.Api()
+
     runs = list(
         api.runs(
             f"{get_wandb_entity()}/{get_wandb_project()}",
@@ -61,50 +104,30 @@ def fetch_best_params(classifier_name: str, data_source: str) -> None:
             f"and data source '{data_source}'. Run --mode sweep first."
         )
 
-    best_run = max(runs, key=lambda r: r.summary.get("val_f1_macro", 0))
+    best_run = max(runs, key=lambda run: run.summary.get(SWEEP_SCORE_KEY, 0))
     best_params = {
-        k: v
-        for k, v in best_run.config.items()
-        if not k.startswith("_") and k != "classifier"
+        key: value
+        for key, value in best_run.config.items()
+        if not key.startswith("_") and key != "classifier"
     }
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
     output_path = best_params_path(classifier_name, data_source)
-    with open(output_path, "w") as f:
-        yaml.safe_dump(best_params, f, sort_keys=True)
+    with open(output_path, "w") as file:
+        yaml.safe_dump(best_params, file, sort_keys=True)
 
     print(f"[classify] Best params saved to {output_path.resolve()}")
-    print(f"[classify] Best val_f1_macro: {best_run.summary.get('val_f1_macro'):.4f}")
+    print(
+        f"[classify] Best {SWEEP_SCORE_KEY}: {best_run.summary.get(SWEEP_SCORE_KEY):.4f}"
+    )
     print(f"[classify] Params: {best_params}")
 
 
 def run_sweep(classifier_name: str, data_source: str) -> None:
-    """
-    Initialise and run a W&B hyperparameter sweep for a classifier.
-
-    Loads sweep configuration from config/sweep_{classifier_name}.yaml.
-    The sweep optimises val_f1_macro and never touches the test set.
-    Each run is named with abbreviated hyperparameter values for
-    readability in the W&B UI.
-
-    Requires W&B to be configured.
-    """
+    """Initialize and run a W&B hyperparameter sweep."""
     wandb_module = _require_wandb_support()
-
-    config_path = CONFIG_DIR / f"sweep_{classifier_name}.yaml"
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"Sweep configuration not found at {config_path}. "
-            "Ensure the corresponding sweep YAML file exists."
-        )
-
-    with open(config_path) as f:
-        sweep_config = yaml.safe_load(f)
-
-    if not isinstance(sweep_config, dict):
-        raise ValueError(
-            f"Sweep configuration at {config_path} must load as a dictionary."
-        )
+    sweep_config = _load_sweep_config(classifier_name)
 
     print(
         f"[classify] Starting W&B sweep for classifier '{classifier_name}' "
@@ -123,13 +146,14 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
                 raise RuntimeError("wandb.init() returned None during sweep run.")
 
             params = dict(wandb_module.config)
-            param_str = "_".join(
-                f"{PARAM_ABBREVIATIONS.get(k, k)}={v}"
-                for k, v in params.items()
-                if k not in ["classifier", "seed"]
+            run_name = _build_sweep_run_name(
+                classifier_name=classifier_name,
+                data_source=data_source,
+                params=params,
             )
-            run_name = f"{data_source}_{classifier_name}_sweep_{param_str}"
+
             run.name = run_name
+
             train_and_validate(
                 classifier_name=classifier_name,
                 data_source=data_source,
@@ -141,22 +165,3 @@ def run_sweep(classifier_name: str, data_source: str) -> None:
             )
 
     wandb_module.agent(sweep_id, function=sweep_run)
-
-
-def _require_wandb_support() -> Any:
-    """
-    Validate that W&B package support and environment configuration exist.
-
-    Returns:
-        The imported wandb module.
-
-    Raises:
-        RuntimeError: If wandb is unavailable or required configuration is missing.
-    """
-    if _wandb is None:
-        raise RuntimeError(
-            "The 'wandb' package is not installed, but a W&B mode was requested. "
-            "Install project dependencies including wandb to use sweep or fetch_best."
-        )
-    require_wandb_config()
-    return cast(Any, _wandb)

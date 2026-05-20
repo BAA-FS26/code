@@ -1,9 +1,8 @@
 """
 Privacy evaluation for synthetic tabular data.
 
-This module evaluates synthetic data against real training and holdout data
-using privacy attack metrics and distance-based privacy metrics, then logs the
-resulting privacy scores.
+Evaluates synthetic data against real training and holdout data using
+privacy attack metrics and distance-based privacy protection metrics.
 
 Usage:
     # Without W&B (default)
@@ -49,26 +48,20 @@ from src.utility.utils import (
 SCRIPT_NAME = "evaluate_privacy.py"
 N_ATTACKS = 2000
 
-# Based on EDA findings — inter-feature associations and data protection relevance.
 SENSITIVE_COLS = ["income", "occupation", "sex", "relationship"]
 
 
 def _risk_metrics(prefix: str, risk: Any) -> dict[str, float]:
-    """
-    Convert an Anonymeter risk object into stable logger metric keys.
-
-    The key names are intentionally unchanged for result and dashboard
-    compatibility.
-    """
+    """Convert an Anonymeter risk object into stable logger metric keys."""
     return {
-        f"{prefix}": float(risk.value),
+        prefix: float(risk.value),
         f"{prefix}_ci_lower": float(risk.ci[0]),
         f"{prefix}_ci_upper": float(risk.ci[1]),
     }
 
 
 def _print_risk_summary(label: str, risk: Any) -> None:
-    """Print an Anonymeter risk estimate with its confidence interval."""
+    """Print an Anonymeter risk estimate with confidence interval."""
     print(
         f"[evaluate_privacy] {label}: {float(risk.value):.4f} "
         f"[{float(risk.ci[0]):.4f}, {float(risk.ci[1]):.4f}]"
@@ -89,11 +82,7 @@ def _build_run_parameters(
     data_source: str,
     use_wandb: bool,
 ) -> dict[str, Any]:
-    """
-    Build logger metadata for privacy evaluation.
-
-    Field names are intentionally stable for result compatibility.
-    """
+    """Build stable logger metadata for Privacy evaluation."""
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "privacy",
@@ -118,21 +107,16 @@ def run_singling_out(
     synthetic_df: pd.DataFrame,
     logger: RunLogger,
 ) -> None:
-    """
-    Run Anonymeter SinglingOutEvaluator in univariate and multivariate mode.
-
-    A risk value near 0 indicates good privacy protection.
-    """
+    """Run Anonymeter SinglingOutEvaluator in univariate and multivariate mode."""
     print(f"[evaluate_privacy] Running SinglingOutEvaluator (n_attacks={N_ATTACKS})...")
 
-    for mode in ["univariate", "multivariate"]:
+    for mode in ("univariate", "multivariate"):
         evaluator = SinglingOutEvaluator(
             ori=train_df,
             syn=synthetic_df,
             control=holdout_df,
             n_attacks=N_ATTACKS,
         )
-
         evaluator.evaluate(mode=mode)
 
         risk = _require_risk(
@@ -148,22 +132,22 @@ def run_singling_out(
         logger.log(_risk_metrics(f"singling_out_risk_{mode}", risk))
 
 
+def _build_linkability_aux_cols(columns: list[str]) -> tuple[list[str], list[str]]:
+    """Split columns into two auxiliary-column groups for linkability attacks."""
+    midpoint = len(columns) // 2
+    return columns[:midpoint], columns[midpoint:]
+
+
 def run_linkability(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
     logger: RunLogger,
 ) -> None:
-    """
-    Run Anonymeter LinkabilityEvaluator and log linkability risk.
-
-    A risk value near 0 indicates good privacy protection.
-    """
+    """Run Anonymeter LinkabilityEvaluator and log linkability risk."""
     print(f"[evaluate_privacy] Running LinkabilityEvaluator (n_attacks={N_ATTACKS})...")
 
-    cols = train_df.columns.tolist()
-    mid = len(cols) // 2
-    aux_cols = (cols[:mid], cols[mid:])
+    aux_cols = _build_linkability_aux_cols(train_df.columns.tolist())
 
     evaluator = LinkabilityEvaluator(
         ori=train_df,
@@ -172,7 +156,6 @@ def run_linkability(
         n_attacks=N_ATTACKS,
         aux_cols=aux_cols,
     )
-
     evaluator.evaluate()
 
     risk = _require_risk(
@@ -181,7 +164,6 @@ def run_linkability(
     )
 
     _print_risk_summary("Linkability Risk", risk)
-
     logger.log(_risk_metrics("linkability_risk", risk))
 
 
@@ -191,11 +173,7 @@ def run_inference(
     synthetic_df: pd.DataFrame,
     logger: RunLogger,
 ) -> None:
-    """
-    Run Anonymeter InferenceEvaluator for each configured sensitive column.
-
-    A risk value near 0 indicates good privacy protection.
-    """
+    """Run Anonymeter InferenceEvaluator for each configured sensitive column."""
     print(f"[evaluate_privacy] Running InferenceEvaluator (n_attacks={N_ATTACKS})...")
 
     for secret in SENSITIVE_COLS:
@@ -207,7 +185,6 @@ def run_inference(
             secret=secret,
             aux_cols=[col for col in train_df.columns if col != secret],
         )
-
         evaluator.evaluate()
 
         risk = _require_risk(
@@ -227,14 +204,10 @@ def run_dcr_metrics(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
-    metadata: dict,
+    metadata: dict[str, Any],
     logger: RunLogger,
 ) -> None:
-    """
-    Run SDMetrics DCR-based privacy metrics and log results.
-
-    A score near 1 indicates better protection.
-    """
+    """Run SDMetrics DCR-based Privacy metrics and log results."""
     print("[evaluate_privacy] Running DCR metrics...")
 
     dcr_baseline_raw = DCRBaselineProtection.compute(
@@ -243,7 +216,6 @@ def run_dcr_metrics(
         metadata=metadata,
         num_rows_subsample=5000,
     )
-
     dcr_overfitting_raw = DCROverfittingProtection.compute(
         real_training_data=train_df,
         synthetic_data=synthetic_df,
@@ -277,9 +249,7 @@ def evaluate_privacy(
     epsilon: float | None = None,
     use_wandb: bool = False,
 ) -> None:
-    """
-    Run full privacy evaluation for a synthesizer.
-    """
+    """Run full Privacy evaluation for a synthesizer."""
     data_source = build_data_source_key(synthesizer_name, epsilon)
     run_name = f"eval_privacy_{data_source.replace('/', '_')}"
 
@@ -331,18 +301,17 @@ def evaluate_privacy(
         print("[evaluate_privacy] Privacy evaluation complete.")
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate privacy of synthetic data using Anonymeter and SDMetrics."
     )
-
     parser.add_argument(
         "--synthesizer",
-        choices=SYNTHESIZERS | DP_SYNTHESIZERS,
+        choices=sorted(SYNTHESIZERS | DP_SYNTHESIZERS),
         required=True,
         help="Synthesizer to evaluate.",
     )
-
     parser.add_argument(
         "--epsilon",
         type=float,
@@ -350,21 +319,24 @@ def main() -> None:
         default=None,
         help="Privacy budget for DP synthesizers. Required for dpctgan/patectgan.",
     )
-
     parser.add_argument(
         "--wandb",
         action="store_true",
         default=False,
-        help="Log results to Weights & Biases. Local JSON logging remains primary.",
+        help="Log results to W&B. Local JSON logging remains primary.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
 
     if args.synthesizer in DP_SYNTHESIZERS and args.epsilon is None:
-        parser.error("--epsilon is required for DP synthesizers.")
+        raise SystemExit("--epsilon is required for DP synthesizers.")
 
     if args.synthesizer not in DP_SYNTHESIZERS and args.epsilon is not None:
-        parser.error("--epsilon should only be used with DP synthesizers.")
+        raise SystemExit("--epsilon should only be used with DP synthesizers.")
 
     evaluate_privacy(
         synthesizer_name=args.synthesizer,

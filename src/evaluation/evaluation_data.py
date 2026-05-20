@@ -1,8 +1,8 @@
 """
 Shared data-loading helpers for evaluation scripts.
 
-This module centralizes evaluation-specific data access so fidelity, privacy,
-and utility evaluation use the same split loading and schema validation logic.
+Centralizes evaluation-specific data access so Fidelity, Privacy, and Utility
+evaluation use the same split loading and schema validation logic.
 """
 
 from pathlib import Path
@@ -19,21 +19,14 @@ from src.utility.constants import (
 
 
 def load_utility_test_dataset() -> tuple[pd.DataFrame, Path]:
-    """
-    Load the real held-out test split for final utility evaluation.
-
-    Utility evaluation always tests on real data, regardless of whether the
-    model was trained on real or synthetic data.
-    """
+    """Load the real held-out test split for final utility evaluation."""
     return _load_real_test()
 
 
 def load_fidelity_datasets(
     data_source: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Path]]:
-    """
-    Load real training data and synthetic training data for fidelity evaluation.
-    """
+    """Load real and synthetic training data for Fidelity evaluation."""
     real_train_df, real_train_path = _load_real_train()
     synthetic_df, synthetic_path = _load_synthetic_train(data_source)
 
@@ -57,10 +50,10 @@ def load_privacy_datasets(
     data_source: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Path]]:
     """
-    Load train, holdout, and synthetic datasets for privacy evaluation.
+    Load real train, real holdout, and synthetic data for Privacy evaluation.
 
-    Holdout is validation + test. The test split is used only as privacy
-    control data here, not for model training or hyperparameter tuning.
+    Holdout is validation + test. The test split is used here only as privacy
+    control data, not for model training or hyperparameter tuning.
     """
     train_df, train_path = _load_real_train()
     validation_df, validation_path = _load_real_validation()
@@ -88,29 +81,29 @@ def load_privacy_datasets(
 
 def _load_real_train() -> tuple[pd.DataFrame, Path]:
     """Load the real training split."""
-    path = processed_split_path(TRAIN_FILENAME)
-    return load_csv(path, "Real training split"), path
+    return _load_processed_split(TRAIN_FILENAME, "Real training split")
 
 
 def _load_real_validation() -> tuple[pd.DataFrame, Path]:
     """Load the real validation split."""
-    path = processed_split_path(VALIDATION_FILENAME)
-    return load_csv(path, "Validation split"), path
+    return _load_processed_split(VALIDATION_FILENAME, "Validation split")
 
 
 def _load_real_test() -> tuple[pd.DataFrame, Path]:
     """Load the real held-out test split."""
-    path = processed_split_path(TEST_FILENAME)
-    return load_csv(path, "Test split"), path
+    return _load_processed_split(TEST_FILENAME, "Test split")
+
+
+def _load_processed_split(
+    filename: str,
+    description: str,
+) -> tuple[pd.DataFrame, Path]:
+    """Load one processed real-data split."""
+    path = processed_split_path(filename)
+    return load_csv(path, description), path
 
 
 def _load_synthetic_train(data_source: str) -> tuple[pd.DataFrame, Path]:
-    """
-    Load synthetic training data for a canonical data source.
-
-    Examples:
-        ctgan
-        dpctgan/eps_1.0
-    """
+    """Load synthetic training data for a canonical data-source key."""
     path = synthetic_train_path(data_source)
     return load_csv(path, "Synthetic training data"), path

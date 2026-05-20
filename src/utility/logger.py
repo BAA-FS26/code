@@ -1,25 +1,8 @@
 """
-logger.py
-
 Run logger abstraction for the synthetic data evaluation pipeline.
 
-Provides a unified interface for logging results that works with or without
-W&B. Local JSON output is the primary source of truth. W&B logging is purely
-additive and must never replace local persistence.
-
-All result files written under results/ follow the same envelope so they are
-easy to consume later from an orchestration layer or dashboard.
-
-Usage:
-    from src.utility.logger import RunLogger
-
-    with RunLogger(
-        run_name="eval_fidelity_ctgan",
-        script_name="evaluate_fidelity.py",
-        parameters={"synthesizer": "ctgan"},
-        use_wandb=True,
-    ) as logger:
-        logger.log({"quality_overall": 0.85})
+Local JSON output is the primary source of truth. W&B logging is optional and
+additive.
 """
 
 import json
@@ -49,24 +32,7 @@ from src.utility.wandb_config import (
 
 
 class RunLogger:
-    """
-    Context manager that logs results locally and optionally to W&B.
-
-    Local JSON output is always written under results/. W&B logging is
-    additive and must not replace local persistence.
-
-    Args:
-        run_name: Unique identifier for this run, used as the local
-                  filename and the W&B run name.
-        script_name: Canonical script identifier for the result envelope.
-        parameters: Parameter / metadata dictionary describing the run.
-        use_wandb: If True, also log to W&B. Requires WANDB_ENTITY to
-                   be set in the environment. Defaults to False.
-        results_dir: Directory for local JSON results. Defaults to
-                     RESULTS_DIR from constants.
-        category: Optional result category subdirectory below results_dir,
-            for example "fidelity", "privacy", or "utility".
-    """
+    """Context manager that logs results locally and optionally to W&B."""
 
     def __init__(
         self,
@@ -75,12 +41,13 @@ class RunLogger:
         parameters: dict[str, Any],
         use_wandb: bool = False,
         results_dir: Path = RESULTS_DIR,
-        category: str | None = None,  # NEW
+        category: str | None = None,
     ) -> None:
         self.run_name = run_name
         self.script_name = script_name
         self.parameters = parameters
         self.use_wandb = use_wandb
+
         base_results_dir = Path(results_dir)
         self.results_dir = (
             base_results_dir / category if category is not None else base_results_dir
@@ -89,9 +56,8 @@ class RunLogger:
         self._results: dict[str, Any] = {}
         self._history: list[dict[str, Any]] = []
         self._artifacts: list[dict[str, Any]] = []
-        self._status: str = "success"
+        self._status = "success"
         self._error: dict[str, str] | None = None
-
         self._wandb_run: Any = None
 
     def __enter__(self) -> "RunLogger":
@@ -113,18 +79,9 @@ class RunLogger:
             self._wandb_run.finish()
 
     def log(self, results: dict[str, Any]) -> None:
-        """
-        Log a dictionary of results.
-
-        The latest values are merged into the run-level results summary.
-        Each call is also appended to local history so repeated keys
-        (for example epoch-wise losses) are preserved in local output.
-
-        Args:
-            results: Dictionary of result names to scalar or JSON-serializable
-                     values.
-        """
+        """Log a dictionary of results."""
         normalized = self._normalize_value(results)
+
         if not isinstance(normalized, dict):
             raise TypeError("RunLogger.log() expects a dictionary of results.")
 
@@ -135,16 +92,7 @@ class RunLogger:
             self._wandb_run.log(normalized)
 
     def log_table(self, key: str, dataframe: Any) -> None:
-        """
-        Log a tabular artifact.
-
-        For local JSON output, a lightweight artifact manifest entry is
-        recorded. For W&B, the full table is logged as a W&B Table.
-
-        Args:
-            key: Artifact key.
-            dataframe: Tabular object expected to behave like a pandas DataFrame.
-        """
+        """Log a tabular artifact."""
         artifact_info = {
             "key": key,
             "type": "table",
@@ -158,13 +106,16 @@ class RunLogger:
                 int(len(dataframe.columns)) if hasattr(dataframe, "columns") else None
             ),
         }
+
         self._artifacts.append(artifact_info)
 
         if self._wandb_run is not None:
             self._wandb_run.log({key: wandb.Table(dataframe=dataframe)})
 
     def _init_wandb(self) -> None:
+        """Initialize a W&B run."""
         require_wandb_config()
+
         self._wandb_run = wandb.init(
             project=get_wandb_project(),
             entity=get_wandb_entity(),
@@ -173,25 +124,39 @@ class RunLogger:
         )
 
     def _save_locally(self) -> None:
+        """Write the local JSON result file."""
         timestamp_dt = datetime.now(timezone.utc)
-        timestamp = timestamp_dt.isoformat()
+        output_path = self._build_output_path(timestamp_dt)
 
+        payload = self._build_payload(timestamp_dt)
+
+        with open(output_path, "w", encoding=DEFAULT_ENCODING) as file:
+            json.dump(payload, file, indent=JSON_INDENT)
+
+        print(f"Results saved to {output_path.resolve()}")
+
+    def _build_output_path(self, timestamp_dt: datetime) -> Path:
+        """Build the dated local JSON output path."""
         date_str = timestamp_dt.strftime("%Y-%m-%d")
         time_str = timestamp_dt.strftime("%H%M%S")
 
+        output_dir = self.results_dir / date_str
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        return output_dir / f"{self.run_name}_{time_str}.json"
+
+    def _build_payload(self, timestamp_dt: datetime) -> dict[str, Any]:
+        """Build the stable result JSON envelope."""
         category = (
             self.results_dir.name if self.results_dir != Path(RESULTS_DIR) else None
         )
-
-        output_dir = self.results_dir / date_str
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         payload = {
             RESULTS_KEY_SCHEMA_VERSION: RESULTS_SCHEMA_VERSION,
             RESULTS_KEY_SCRIPT: self.script_name,
             "category": category,
             RESULTS_KEY_RUN_NAME: self.run_name,
-            RESULTS_KEY_TIMESTAMP: timestamp,
+            RESULTS_KEY_TIMESTAMP: timestamp_dt.isoformat(),
             RESULTS_KEY_PARAMETERS: self._normalize_value(self.parameters),
             RESULTS_KEY_RESULTS: {
                 "status": self._status,
@@ -204,17 +169,10 @@ class RunLogger:
         if self._error is not None:
             payload[RESULTS_KEY_RESULTS]["error"] = self._normalize_value(self._error)
 
-        out_path = output_dir / f"{self.run_name}_{time_str}.json"
-
-        with open(out_path, "w", encoding=DEFAULT_ENCODING) as f:
-            json.dump(payload, f, indent=JSON_INDENT)
-
-        print(f"Results saved to {out_path.resolve()}")
+        return payload
 
     def _normalize_value(self, value: Any) -> Any:
-        """
-        Convert common non-JSON-native values into JSON-safe equivalents.
-        """
+        """Convert common non-JSON-native values into JSON-safe equivalents."""
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
 
@@ -222,10 +180,10 @@ class RunLogger:
             return str(value)
 
         if isinstance(value, dict):
-            return {str(k): self._normalize_value(v) for k, v in value.items()}
+            return {str(key): self._normalize_value(val) for key, val in value.items()}
 
         if isinstance(value, (list, tuple, set)):
-            return [self._normalize_value(v) for v in value]
+            return [self._normalize_value(item) for item in value]
 
         if hasattr(value, "item") and callable(value.item):
             try:

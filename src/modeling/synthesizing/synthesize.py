@@ -1,9 +1,5 @@
 """
-synthesize.py
-
-Synthesis pipeline for the Adult Census Income dataset.
-Trains a non-DP synthesizer on the real training data and generates a
-synthetic dataset of equal size.
+synthesis pipeline for the Adult Census Income dataset with Synthetic Data Vault models.
 
 Supported synthesizers:
   - gaussian_copula
@@ -26,7 +22,6 @@ Usage:
 
 import argparse
 import time
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -49,18 +44,12 @@ from src.core.paths import (
 from src.utility.constants import (
     RANDOM_STATE,
     SYNTHESIZERS,
-    SYNTHESIZER_MODELS_DIR,
     TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import set_random_seeds
 
 SCRIPT_NAME = "synthesize.py"
-
-
-def _run_name(synthesizer_name: str) -> str:
-    """Return a consistent run name for logging."""
-    return f"synthesizer_{synthesizer_name}_default"
 
 
 def load_training_data() -> pd.DataFrame:
@@ -84,8 +73,7 @@ def validate_synthetic_output(
     """Validate generated synthetic data before saving."""
     if len(synthetic_df) != expected_rows:
         raise ValueError(
-            f"Synthetic data has {len(synthetic_df)} rows, "
-            f"expected {expected_rows}."
+            f"Synthetic data has {len(synthetic_df)} rows, expected {expected_rows}."
         )
 
     validate_matching_columns(
@@ -98,222 +86,96 @@ def validate_synthetic_output(
 def build_metadata(df: pd.DataFrame) -> Metadata:
     """Build and validate SDV metadata for the Adult Census table."""
     metadata = Metadata.detect_from_dataframe(data=df, table_name="adult")
-
     metadata.update_column(
         table_name="adult",
         column_name="income",
         sdtype="categorical",
     )
-
     metadata.validate()
 
     print("[synthesize] Metadata validated successfully.")
-
     return metadata
-
-
-def _validate_synthesizer_name(synthesizer_name: str) -> None:
-    """Validate synthesizer selection."""
-    if synthesizer_name not in SYNTHESIZERS:
-        raise ValueError(
-            f"Unknown synthesizer '{synthesizer_name}'. "
-            f"Choose from: {sorted(SYNTHESIZERS)}"
-        )
 
 
 def build_synthesizer(
     synthesizer_name: str,
     metadata: Metadata,
     cuda: bool = False,
-):
+) -> Any:
     """Build a non-DP SDV synthesizer."""
-    _validate_synthesizer_name(synthesizer_name)
-
     if synthesizer_name == "gaussian_copula":
         return GaussianCopulaSynthesizer(metadata=metadata)
 
     synthesizer_cls = {
         "ctgan": CTGANSynthesizer,
         "tvae": TVAESynthesizer,
-    }[synthesizer_name]
+    }.get(synthesizer_name)
 
-    return synthesizer_cls(
-        metadata=metadata,
-        enable_gpu=cuda,
-        verbose=True,
-    )
+    if synthesizer_cls is None:
+        raise ValueError(f"Unknown synthesizer: {synthesizer_name}")
 
-
-def print_gpu_info(synthesizer_name: str, cuda: bool) -> None:
-    """Print GPU availability and usage status."""
-    if synthesizer_name not in {"ctgan", "tvae"}:
-        print("[synthesize] GPU acceleration: not applicable for GaussianCopula")
-        return
-
-    gpu_available = torch.cuda.is_available()
-    gpu_in_use = cuda and gpu_available
-
-    print(f"[synthesize] GPU available: {gpu_available}")
-    print(f"[synthesize] GPU requested: {cuda}")
-    print(f"[synthesize] GPU in use: {gpu_in_use}")
-
-    if cuda and not gpu_available:
-        print(
-            "[synthesize] Warning: --cuda was set but no GPU is available. "
-            "Falling back to CPU."
-        )
+    return synthesizer_cls(metadata=metadata, cuda=cuda)
 
 
 def _build_run_parameters(
     synthesizer_name: str,
-    cuda: bool,
+    use_cuda: bool,
     use_wandb: bool,
 ) -> dict[str, Any]:
-    """
-    Build logger metadata for synthesis runs.
-
-    IMPORTANT:
-    Keys must remain stable for dashboard/result compatibility.
-    """
+    """Build stable logger metadata for a synthesis run."""
     return {
         "pipeline_stage": "synthesis",
-        "evaluation": None,
-        "mode": "default",
-        "data_source": synthesizer_name,
         "synthesizer": synthesizer_name,
+        "mode": "default",
         "epsilon": None,
-        "classifier": None,
-        "model_type": None,
-        "params": {},
         "random_state": RANDOM_STATE,
+        "cuda": use_cuda,
         "use_wandb": use_wandb,
-        "cuda": cuda,
     }
 
 
-def _save_metadata(
-    metadata: Metadata,
-    synthesizer_name: str,
-) -> Path:
-    """Save SDV metadata to disk."""
-    SYNTHESIZER_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-    metadata_path = synthesizer_metadata_path(synthesizer_name)
-
-    metadata.save_to_json(filepath=str(metadata_path))
-
-    print(f"[synthesize] Metadata saved to {metadata_path.resolve()}")
-
-    return metadata_path
-
-
-def _save_synthesizer(
-    synthesizer: Any,
-    synthesizer_name: str,
-) -> Path:
-    """Save trained synthesizer model to disk."""
-    SYNTHESIZER_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-    model_path = synthesizer_model_path(
-        synthesizer_name=synthesizer_name,
-        mode="default",
-    )
-
-    synthesizer.save(filepath=str(model_path))
-
-    print(f"[synthesize] Synthesizer saved to {model_path.resolve()}")
-
-    return model_path
-
-
-def _save_synthetic_data(
-    synthetic_df: pd.DataFrame,
-    synthesizer_name: str,
-) -> Path:
-    """Save generated synthetic data to disk."""
-    output_dir = synthetic_output_dir(
-        synthesizer_name=synthesizer_name,
-        mode="default",
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_path = synthetic_output_path(
-        synthesizer_name=synthesizer_name,
-        mode="default",
-    )
-
-    synthetic_df.to_csv(output_path, index=False)
-
-    print(f"[synthesize] Synthetic data saved to {output_path.resolve()}")
-
-    return output_path
-
-
-def log_loss_values(
-    synthesizer_name: str,
-    synthesizer,
-    logger: RunLogger,
-) -> None:
-    """Log iterative training losses for CTGAN and TVAE."""
-    if synthesizer_name not in {"ctgan", "tvae"}:
-        return
-
-    loss_values = synthesizer.get_loss_values()
-
-    if synthesizer_name == "ctgan":
-        for _, row in loss_values.iterrows():
-            logger.log(
-                {
-                    "epoch": int(row["Epoch"]),
-                    "loss_generator": row["Generator Loss"],
-                    "loss_discriminator": row["Discriminator Loss"],
-                }
-            )
-
-    elif synthesizer_name == "tvae":
-        epoch_loss = loss_values.groupby("Epoch")["Loss"].mean().reset_index()
-
-        for _, row in epoch_loss.iterrows():
-            logger.log(
-                {
-                    "epoch": int(row["Epoch"]),
-                    "loss": row["Loss"],
-                }
-            )
-
-
-def train_and_generate(
+def run_synthesis(
     synthesizer_name: str,
     cuda: bool = False,
     use_wandb: bool = False,
 ) -> None:
-    """
-    Train a non-DP synthesizer and save generated synthetic data.
-    """
+    """Train a non-DP synthesizer and save synthetic training data."""
+    if synthesizer_name not in SYNTHESIZERS:
+        raise ValueError(
+            f"Unsupported synthesizer '{synthesizer_name}'. "
+            f"Available synthesizers: {sorted(SYNTHESIZERS)}"
+        )
+
+    if cuda and synthesizer_name == "gaussian_copula":
+        raise ValueError("CUDA is only supported for CTGAN and TVAE.")
+
+    if cuda and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but no CUDA device is available.")
+
     set_random_seeds(RANDOM_STATE)
 
-    run_name = _run_name(synthesizer_name)
+    train_df = load_training_data()
+    metadata = build_metadata(train_df)
+
+    output_dir = synthetic_output_dir(synthesizer_name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    model_dir = synthesizer_model_path(synthesizer_name).parent
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    run_name = f"synthesizer_{synthesizer_name}_default"
 
     with RunLogger(
         run_name=run_name,
         script_name=SCRIPT_NAME,
         parameters=_build_run_parameters(
             synthesizer_name=synthesizer_name,
-            cuda=cuda,
+            use_cuda=cuda,
             use_wandb=use_wandb,
         ),
         use_wandb=use_wandb,
         category="synthesis",
     ) as logger:
-        train_df = load_training_data()
-
-        print_gpu_info(
-            synthesizer_name=synthesizer_name,
-            cuda=cuda,
-        )
-
-        metadata = build_metadata(train_df)
-
         synthesizer = build_synthesizer(
             synthesizer_name=synthesizer_name,
             metadata=metadata,
@@ -321,18 +183,11 @@ def train_and_generate(
         )
 
         print(f"[synthesize] Training {synthesizer_name}...")
-
-        start_time = time.perf_counter()
-
+        start_time = time.time()
         synthesizer.fit(train_df)
+        training_time_seconds = time.time() - start_time
 
-        training_time_seconds = time.perf_counter() - start_time
-
-        print(
-            f"[synthesize] Training completed in "
-            f"{training_time_seconds:.2f} seconds"
-        )
-
+        print(f"[synthesize] Sampling {len(train_df)} synthetic rows...")
         synthetic_df = synthesizer.sample(num_rows=len(train_df))
 
         validate_synthetic_output(
@@ -341,68 +196,45 @@ def train_and_generate(
             expected_rows=len(train_df),
         )
 
-        metadata_path = _save_metadata(
-            metadata=metadata,
-            synthesizer_name=synthesizer_name,
-        )
+        output_path = synthetic_output_path(synthesizer_name)
+        synthetic_df.to_csv(output_path, index=False)
 
-        model_path = _save_synthesizer(
-            synthesizer=synthesizer,
-            synthesizer_name=synthesizer_name,
-        )
+        metadata_path = synthesizer_metadata_path(synthesizer_name)
+        metadata.save_to_json(metadata_path)
 
-        synthetic_data_path = _save_synthetic_data(
-            synthetic_df=synthetic_df,
-            synthesizer_name=synthesizer_name,
-        )
+        model_path = synthesizer_model_path(synthesizer_name)
+        synthesizer.save(filepath=model_path)
+
+        print(f"[synthesize] Synthetic data saved to {output_path.resolve()}")
+        print(f"[synthesize] Metadata saved to {metadata_path.resolve()}")
+        print(f"[synthesize] Synthesizer saved to {model_path.resolve()}")
 
         logger.log(
             {
+                "n_train_rows": len(train_df),
+                "n_synthetic_rows": len(synthetic_df),
                 "training_time_seconds": training_time_seconds,
-                "n_samples_train": len(train_df),
-                "n_samples_synthetic": len(synthetic_df),
-                "n_features": train_df.shape[1],
+                "synthetic_path": str(output_path),
                 "metadata_path": str(metadata_path),
                 "model_path": str(model_path),
-                "synthetic_data_path": str(synthetic_data_path),
             }
         )
 
-        log_loss_values(
-            synthesizer_name=synthesizer_name,
-            synthesizer=synthesizer,
-            logger=logger,
-        )
 
-        print("[synthesize] Run completed successfully.")
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description="Generate non-DP synthetic Adult Census training data."
+    )
+    parser.add_argument("--synthesizer", choices=sorted(SYNTHESIZERS), required=True)
+    parser.add_argument("--cuda", action="store_true")
+    parser.add_argument("--wandb", action="store_true")
+    return parser.parse_args()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Train a non-DP synthesizer and generate synthetic data."
-    )
-    parser.add_argument(
-        "--synthesizer",
-        choices=SYNTHESIZERS,
-        required=True,
-        help="Synthesizer to train.",
-    )
-    parser.add_argument(
-        "--cuda",
-        action="store_true",
-        default=False,
-        help="Use GPU acceleration for CTGAN and TVAE. Defaults to False.",
-    )
-    parser.add_argument(
-        "--wandb",
-        action="store_true",
-        default=False,
-        help="Log results to Weights & Biases. Local JSON logging remains primary.",
-    )
-
-    args = parser.parse_args()
-
-    train_and_generate(
+    args = _parse_args()
+    run_synthesis(
         synthesizer_name=args.synthesizer,
         cuda=args.cuda,
         use_wandb=args.wandb,
