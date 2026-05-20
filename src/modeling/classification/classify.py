@@ -33,10 +33,6 @@ from typing import Any
 
 import yaml
 
-try:
-    import wandb as _wandb
-except ImportError:
-    _wandb = None
 
 from src.core.data_source import resolve_training_data_source
 from src.modeling.classification.classifier_sweeps import fetch_best_params, run_sweep
@@ -94,6 +90,11 @@ def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Train and evaluate classifiers for synthetic data utility evaluation."
+    )
+    parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
     )
 
     parser.add_argument(
@@ -159,6 +160,7 @@ def main() -> None:
         model_type=model_type,
         save_model=True,
         use_wandb=args.wandb,
+        dataset_name=args.dataset,
     )
 
 

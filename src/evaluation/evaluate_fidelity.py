@@ -25,6 +25,7 @@ import pandas as pd
 from sdmetrics.reports.single_table import DiagnosticReport, QualityReport
 
 from src.core.data_source import build_data_source_key
+from src.dataset.dataset_config import get_dataset_config
 from src.evaluation.evaluation_data import load_fidelity_datasets
 from src.utility.constants import (
     DP_EPSILONS,
@@ -34,7 +35,7 @@ from src.utility.constants import (
     SYNTHESIZERS,
 )
 from src.utility.logger import RunLogger
-from src.utility.utils import build_adult_sdmetrics_metadata, load_metadata
+from src.utility.utils import build_sdmetrics_metadata, load_metadata
 
 SCRIPT_NAME = "evaluate_fidelity.py"
 MODELS_DIR = SYNTHESIZER_MODELS_DIR
@@ -170,6 +171,7 @@ def run_diagnostic_report(
 
 def _build_run_parameters(
     synthesizer_name: str,
+    dataset_name: str,
     epsilon: float | None,
     data_source: str,
     use_wandb: bool,
@@ -178,6 +180,7 @@ def _build_run_parameters(
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "fidelity",
+        "dataset": dataset_name,
         "mode": "default" if epsilon is None else f"eps_{epsilon}",
         "data_source": data_source,
         "synthesizer": synthesizer_name,
@@ -194,6 +197,7 @@ def _build_run_parameters(
 def evaluate_fidelity(
     synthesizer_name: str,
     epsilon: float | None = None,
+    dataset_name: str = "adult_census",
     use_wandb: bool = False,
 ) -> None:
     """Run full Fidelity evaluation for a synthesizer."""
@@ -205,6 +209,7 @@ def evaluate_fidelity(
         epsilon=epsilon,
         data_source=data_source,
         use_wandb=use_wandb,
+        dataset_name=dataset_name,
     )
 
     with RunLogger(
@@ -219,7 +224,7 @@ def evaluate_fidelity(
         metadata = load_metadata(
             MODELS_DIR,
             synthesizer_name,
-            fallback=build_adult_sdmetrics_metadata(),
+            fallback=build_sdmetrics_metadata(get_dataset_config(dataset_name)),
         )
 
         print(f"[evaluate_fidelity] Real training data: {len(real_df)} rows")
@@ -244,6 +249,11 @@ def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate fidelity of synthetic data using SDMetrics."
+    )
+    parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
     )
     parser.add_argument(
         "--synthesizer",
@@ -280,6 +290,7 @@ def main() -> None:
     evaluate_fidelity(
         synthesizer_name=args.synthesizer,
         epsilon=args.epsilon,
+        dataset_name=args.dataset,
         use_wandb=args.wandb,
     )
 

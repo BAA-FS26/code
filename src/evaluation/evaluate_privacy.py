@@ -30,6 +30,7 @@ from anonymeter.evaluators import (
 from sdmetrics.single_table import DCRBaselineProtection, DCROverfittingProtection
 
 from src.core.data_source import build_data_source_key
+from src.dataset.dataset_config import get_dataset_config
 from src.evaluation.evaluation_data import load_privacy_datasets
 from src.utility.constants import (
     DP_EPSILONS,
@@ -40,15 +41,13 @@ from src.utility.constants import (
 )
 from src.utility.logger import RunLogger
 from src.utility.utils import (
-    build_adult_sdmetrics_metadata,
+    build_sdmetrics_metadata,
     load_metadata,
     set_random_seeds,
 )
 
 SCRIPT_NAME = "evaluate_privacy.py"
 N_ATTACKS = 2000
-
-SENSITIVE_COLS = ["income", "occupation", "sex", "relationship"]
 
 
 def _risk_metrics(prefix: str, risk: Any) -> dict[str, float]:
@@ -80,12 +79,15 @@ def _build_run_parameters(
     synthesizer_name: str,
     epsilon: float | None,
     data_source: str,
+    dataset_name: str,
+    sensitive_cols: list[str],
     use_wandb: bool,
 ) -> dict[str, Any]:
     """Build stable logger metadata for Privacy evaluation."""
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "privacy",
+        "dataset": dataset_name,
         "mode": "default" if epsilon is None else f"eps_{epsilon}",
         "data_source": data_source,
         "synthesizer": synthesizer_name,
@@ -97,7 +99,7 @@ def _build_run_parameters(
         "use_wandb": use_wandb,
         "metadata_key": synthesizer_name,
         "n_attacks": N_ATTACKS,
-        "sensitive_cols": SENSITIVE_COLS,
+        "sensitive_cols": sensitive_cols,
     }
 
 
@@ -171,12 +173,13 @@ def run_inference(
     train_df: pd.DataFrame,
     holdout_df: pd.DataFrame,
     synthetic_df: pd.DataFrame,
+    sensitive_cols: list[str],
     logger: RunLogger,
 ) -> None:
     """Run Anonymeter InferenceEvaluator for each configured sensitive column."""
     print(f"[evaluate_privacy] Running InferenceEvaluator (n_attacks={N_ATTACKS})...")
 
-    for secret in SENSITIVE_COLS:
+    for secret in sensitive_cols:
         evaluator = InferenceEvaluator(
             ori=train_df,
             syn=synthetic_df,
@@ -247,9 +250,13 @@ def run_dcr_metrics(
 def evaluate_privacy(
     synthesizer_name: str,
     epsilon: float | None = None,
+    dataset_name: str = "adult_census",
     use_wandb: bool = False,
 ) -> None:
     """Run full Privacy evaluation for a synthesizer."""
+    dataset_config = get_dataset_config(dataset_name)
+    sensitive_cols = dataset_config.sensitive_cols
+
     data_source = build_data_source_key(synthesizer_name, epsilon)
     run_name = f"eval_privacy_{data_source.replace('/', '_')}"
 
@@ -257,6 +264,8 @@ def evaluate_privacy(
         synthesizer_name=synthesizer_name,
         epsilon=epsilon,
         data_source=data_source,
+        dataset_name=dataset_name,
+        sensitive_cols=sensitive_cols,
         use_wandb=use_wandb,
     )
 
@@ -272,7 +281,7 @@ def evaluate_privacy(
         metadata = load_metadata(
             SYNTHESIZER_MODELS_DIR,
             synthesizer_name,
-            fallback=build_adult_sdmetrics_metadata(),
+            fallback=build_sdmetrics_metadata(dataset_config),
         )
 
         print(f"[evaluate_privacy] Real training data: {len(train_df)} rows")
@@ -295,7 +304,7 @@ def evaluate_privacy(
 
         run_singling_out(train_df, holdout_df, synthetic_df, logger)
         run_linkability(train_df, holdout_df, synthetic_df, logger)
-        run_inference(train_df, holdout_df, synthetic_df, logger)
+        run_inference(train_df, holdout_df, synthetic_df, sensitive_cols, logger)
         run_dcr_metrics(train_df, holdout_df, synthetic_df, metadata, logger)
 
         print("[evaluate_privacy] Privacy evaluation complete.")
@@ -305,6 +314,11 @@ def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate privacy of synthetic data using Anonymeter and SDMetrics."
+    )
+    parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
     )
     parser.add_argument(
         "--synthesizer",

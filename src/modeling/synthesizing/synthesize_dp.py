@@ -1,12 +1,12 @@
 """
-Differentially private synthesis pipeline for the Adult Census Income dataset.
+Differentially private synthesis pipeline using SmartNoise-Synth
 
 Trains a DP synthesizer on the real training split and generates a synthetic
 dataset of equal size for a given epsilon value.
 
 Supported synthesizers:
-  - dpctgan:   DP-SGD-based conditional tabular GAN (Xu et al., 2019)
-  - patectgan: PATE-based conditional tabular GAN (Jordon et al., 2019)
+  - dpctgan:   DP-SGD-based conditional tabular GAN
+  - patectgan: PATE-based conditional tabular GAN
 
 Usage:
     # Without W&B (default)
@@ -41,7 +41,7 @@ from src.core.paths import (
     synthetic_output_dir,
     synthetic_output_path,
 )
-from src.dataset.adult_census import CATEGORICAL_COLS, NUMERICAL_COLS, TARGET_COL
+from src.dataset.dataset_config import DatasetConfig, get_dataset_config
 from src.utility.constants import (
     DP_EPSILONS,
     DP_PREPROCESSOR_EPS_FRACTION,
@@ -53,10 +53,6 @@ from src.utility.logger import RunLogger
 from src.utility.utils import set_random_seeds
 
 SCRIPT_NAME = "synthesize_dp.py"
-
-ORDINAL_COLS = ["education-num"]
-CONTINUOUS_COLS = [col for col in NUMERICAL_COLS if col not in ORDINAL_COLS]
-CATEGORICAL_COLS_WITH_TARGET = CATEGORICAL_COLS + [TARGET_COL]
 
 
 def _run_name(synthesizer_name: str, epsilon: float) -> str:
@@ -134,6 +130,7 @@ def build_dp_synthesizer(
 
 def _build_run_parameters(
     synthesizer_name: str,
+    dataset_name: str,
     epsilon: float,
     preprocessor_eps: float,
     data_source: str,
@@ -146,6 +143,7 @@ def _build_run_parameters(
     return {
         "pipeline_stage": "synthesis",
         "evaluation": None,
+        "dataset": dataset_name,
         "mode": f"eps_{epsilon}",
         "data_source": data_source,
         "synthesizer": synthesizer_name,
@@ -165,10 +163,22 @@ def _build_run_parameters(
 def train_and_generate(
     synthesizer_name: str,
     epsilon: float,
+    dataset_name: str = "adult_census",
     cuda: bool = False,
     use_wandb: bool = False,
 ) -> None:
     """Train a DP synthesizer and save generated synthetic data."""
+
+    dataset_config = get_dataset_config(dataset_name)
+
+    ordinal_cols = dataset_config.ordinal_cols
+    continuous_cols = [
+        col for col in dataset_config.numerical_cols if col not in ordinal_cols
+    ]
+    categorical_cols_with_target = dataset_config.categorical_cols + [
+        dataset_config.target_col
+    ]
+
     preprocessor_eps = round(epsilon * DP_PREPROCESSOR_EPS_FRACTION, 6)
     _validate_epsilon_settings(epsilon, preprocessor_eps)
 
@@ -182,6 +192,7 @@ def train_and_generate(
 
     parameters = _build_run_parameters(
         synthesizer_name=synthesizer_name,
+        dataset_name=dataset_name,
         epsilon=epsilon,
         preprocessor_eps=preprocessor_eps,
         data_source=data_source,
@@ -228,9 +239,9 @@ def train_and_generate(
 
         synthesizer.fit(
             train_df,
-            categorical_columns=CATEGORICAL_COLS_WITH_TARGET,
-            ordinal_columns=ORDINAL_COLS,
-            continuous_columns=CONTINUOUS_COLS,
+            categorical_columns=categorical_cols_with_target,
+            ordinal_columns=ordinal_cols,
+            continuous_columns=continuous_cols,
             preprocessor_eps=preprocessor_eps,
             nullable=True,
         )
@@ -273,6 +284,11 @@ def _parse_args() -> argparse.Namespace:
         description="Train a DP synthesizer and generate synthetic data."
     )
     parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
+    )
+    parser.add_argument(
         "--synthesizer",
         choices=sorted(DP_SYNTHESIZERS),
         required=True,
@@ -307,6 +323,7 @@ def main() -> None:
     train_and_generate(
         synthesizer_name=args.synthesizer,
         epsilon=args.epsilon,
+        dataset_name=args.dataset,
         cuda=args.cuda,
         use_wandb=args.wandb,
     )

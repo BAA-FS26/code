@@ -1,5 +1,5 @@
 """
-synthesis pipeline for the Adult Census Income dataset with Synthetic Data Vault models.
+Synthesis pipeline with Synthetic Data Vault synthesizer.
 
 Supported synthesizers:
   - gaussian_copula
@@ -47,6 +47,7 @@ from src.utility.constants import (
     TRAIN_FILENAME,
 )
 from src.utility.logger import RunLogger
+from src.dataset.dataset_config import DatasetConfig, get_dataset_config
 from src.utility.utils import set_random_seeds
 
 SCRIPT_NAME = "synthesize.py"
@@ -83,14 +84,22 @@ def validate_synthetic_output(
     )
 
 
-def build_metadata(df: pd.DataFrame) -> Metadata:
-    """Build and validate SDV metadata for the Adult Census table."""
-    metadata = Metadata.detect_from_dataframe(data=df, table_name="adult")
+def build_metadata(
+    df: pd.DataFrame,
+    dataset_config: DatasetConfig,
+) -> Metadata:
+    """Build and validate SDV metadata for one tabular dataset."""
+    metadata = Metadata.detect_from_dataframe(
+        data=df,
+        table_name=dataset_config.name,
+    )
+
     metadata.update_column(
-        table_name="adult",
-        column_name="income",
+        table_name=dataset_config.name,
+        column_name=dataset_config.target_col,
         sdtype="categorical",
     )
+
     metadata.validate()
 
     print("[synthesize] Metadata validated successfully.")
@@ -119,6 +128,7 @@ def build_synthesizer(
 
 def _build_run_parameters(
     synthesizer_name: str,
+    dataset_name: str,
     use_cuda: bool,
     use_wandb: bool,
 ) -> dict[str, Any]:
@@ -126,6 +136,7 @@ def _build_run_parameters(
     return {
         "pipeline_stage": "synthesis",
         "synthesizer": synthesizer_name,
+        "dataset": dataset_name,
         "mode": "default",
         "epsilon": None,
         "random_state": RANDOM_STATE,
@@ -136,10 +147,11 @@ def _build_run_parameters(
 
 def run_synthesis(
     synthesizer_name: str,
+    dataset_name: str = "adult_census",
     cuda: bool = False,
     use_wandb: bool = False,
 ) -> None:
-    """Train a non-DP synthesizer and save synthetic training data."""
+    """Train a SDV synthesizer and save synthetic training data."""
     if synthesizer_name not in SYNTHESIZERS:
         raise ValueError(
             f"Unsupported synthesizer '{synthesizer_name}'. "
@@ -154,8 +166,10 @@ def run_synthesis(
 
     set_random_seeds(RANDOM_STATE)
 
+    dataset_config = get_dataset_config(dataset_name)
+
     train_df = load_training_data()
-    metadata = build_metadata(train_df)
+    metadata = build_metadata(train_df, dataset_config)
 
     output_dir = synthetic_output_dir(synthesizer_name)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +184,7 @@ def run_synthesis(
         script_name=SCRIPT_NAME,
         parameters=_build_run_parameters(
             synthesizer_name=synthesizer_name,
+            dataset_name=dataset_name,
             use_cuda=cuda,
             use_wandb=use_wandb,
         ),
@@ -224,7 +239,12 @@ def run_synthesis(
 def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Generate non-DP synthetic Adult Census training data."
+        description="Generate synthetic training data with SDV Synthesizer."
+    )
+    parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
     )
     parser.add_argument("--synthesizer", choices=sorted(SYNTHESIZERS), required=True)
     parser.add_argument("--cuda", action="store_true")
@@ -236,6 +256,7 @@ def main() -> None:
     args = _parse_args()
     run_synthesis(
         synthesizer_name=args.synthesizer,
+        dataset_name=args.dataset,
         cuda=args.cuda,
         use_wandb=args.wandb,
     )

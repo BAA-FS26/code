@@ -15,7 +15,7 @@ from src.core.data_source import (
     synthesizer_from_data_source,
 )
 from src.core.paths import classifier_model_path
-from src.dataset.adult_census import TARGET_COL
+from src.dataset.dataset_config import get_dataset_config
 from src.evaluation.metrics import compute_classification_metrics
 from src.modeling.classification.classifier_data import (
     load_splits,
@@ -31,6 +31,7 @@ SCRIPT_NAME = "classifier_training.py"
 
 def _build_run_parameters(
     classifier_name: str,
+    dataset_name: str,
     data_source: str,
     params: dict[str, Any],
     mode: str,
@@ -43,6 +44,7 @@ def _build_run_parameters(
     return {
         "pipeline_stage": "classification",
         "evaluation": "validation_utility",
+        "dataset": dataset_name,
         "mode": mode,
         "data_source": data_source,
         "synthesizer": synthesizer_from_data_source(data_source),
@@ -64,6 +66,7 @@ def _save_model_payload(
     params: dict[str, Any],
     current_seed: int,
     model_type: str,
+    target_col: str,
 ) -> Path:
     """Save the fitted classifier and fitted preprocessor without changing schema."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,7 +85,7 @@ def _save_model_payload(
             "data_source": data_source,
             "params": params,
             "seed": current_seed,
-            "target_col": TARGET_COL,
+            "target_col": target_col,
         },
     }
 
@@ -102,12 +105,15 @@ def train_and_validate(
     model_type: str | None = None,
     save_model: bool = False,
     use_wandb: bool = False,
+    dataset_name: str = "adult_census",
 ) -> None:
     """Train a classifier and evaluate it on train and validation splits."""
+    dataset_config = get_dataset_config(dataset_name)
     current_seed = params.get("seed", RANDOM_STATE)
 
     parameters = _build_run_parameters(
         classifier_name=classifier_name,
+        dataset_name=dataset_name,
         data_source=data_source,
         params=params,
         mode=mode,
@@ -132,6 +138,7 @@ def train_and_validate(
             classifier_name=classifier_name,
             train_df=train_df,
             val_df=val_df,
+            dataset_name=dataset_name,
         )
 
         print(
@@ -173,6 +180,7 @@ def train_and_validate(
                 params=params,
                 current_seed=current_seed,
                 model_type=model_type,
+                target_col=dataset_config.target_col,
             )
 
             logger.log({"model_path": model_path})

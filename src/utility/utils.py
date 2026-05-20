@@ -15,11 +15,10 @@ import numpy as np
 import torch
 from sdv.metadata import Metadata
 
-from src.dataset.adult_census import CATEGORICAL_COLS, NUMERICAL_COLS, TARGET_COL
+from src.dataset.dataset_config import DatasetConfig, get_dataset_config
 from src.utility.constants import RANDOM_STATE
 
-_ADULT_NUMERICAL_COLS = NUMERICAL_COLS
-_ADULT_CATEGORICAL_COLS = CATEGORICAL_COLS
+DEFAULT_CONFIG = get_dataset_config()
 
 
 def set_random_seeds(seed: int = RANDOM_STATE, strict: bool = True) -> None:
@@ -47,33 +46,30 @@ def set_random_seeds(seed: int = RANDOM_STATE, strict: bool = True) -> None:
             ) from exc
 
 
-def build_adult_sdmetrics_metadata() -> dict[str, dict[str, dict[str, str]]]:
-    """Build an SDMetrics-compatible metadata dictionary for Adult Census."""
+def build_sdmetrics_metadata(
+    config: DatasetConfig = DEFAULT_CONFIG,
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Build an SDMetrics-compatible metadata dictionary for one tabular dataset."""
     columns: dict[str, dict[str, str]] = {}
 
-    for column in _ADULT_NUMERICAL_COLS:
+    for column in config.numerical_cols:
         columns[column] = {"sdtype": "numerical"}
 
-    for column in _ADULT_CATEGORICAL_COLS:
+    for column in config.categorical_cols:
         columns[column] = {"sdtype": "categorical"}
 
-    columns[TARGET_COL] = {"sdtype": "categorical"}
+    columns[config.target_col] = {"sdtype": "categorical"}
 
     metadata = {"columns": columns}
-    _validate_adult_sdmetrics_metadata(metadata)
+    _validate_sdmetrics_metadata(metadata, config)
 
     return metadata
 
 
-def build_sdmetrics_metadata() -> dict[str, dict[str, dict[str, str]]]:
-    """Backward-compatible alias for Adult-specific SDMetrics metadata."""
-    return build_adult_sdmetrics_metadata()
-
-
-def _validate_adult_sdmetrics_metadata(
+def _validate_sdmetrics_metadata(
     metadata: dict[str, dict[str, dict[str, str]]],
+    config: DatasetConfig,
 ) -> None:
-    """Validate the Adult fallback SDMetrics metadata structure."""
     columns = metadata.get("columns")
 
     if not columns:
@@ -81,20 +77,21 @@ def _validate_adult_sdmetrics_metadata(
             "Fallback SDMetrics metadata must contain a non-empty 'columns' mapping."
         )
 
-    required_cols = set(_ADULT_NUMERICAL_COLS + _ADULT_CATEGORICAL_COLS + [TARGET_COL])
+    required_cols = set(
+        config.numerical_cols + config.categorical_cols + [config.target_col]
+    )
     actual_cols = set(columns.keys())
     missing_cols = sorted(required_cols - actual_cols)
 
     if missing_cols:
         raise ValueError(
-            "Fallback SDMetrics metadata is missing required Adult columns: "
-            f"{missing_cols}"
+            f"Fallback SDMetrics metadata is missing required columns: {missing_cols}"
         )
 
-    target_sdtype = columns[TARGET_COL].get("sdtype")
+    target_sdtype = columns[config.target_col].get("sdtype")
     if target_sdtype != "categorical":
         raise ValueError(
-            f"Fallback SDMetrics metadata must mark '{TARGET_COL}' as categorical."
+            f"Fallback SDMetrics metadata must mark '{config.target_col}' as categorical."
         )
 
 

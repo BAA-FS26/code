@@ -130,6 +130,7 @@ def load_saved_model(
 
 def _build_run_parameters(
     classifier_name: str,
+    dataset_name: str,
     data_source: str,
     model_type: str,
     params: Any,
@@ -141,6 +142,7 @@ def _build_run_parameters(
     return {
         "pipeline_stage": "evaluation",
         "evaluation": "utility",
+        "dataset": dataset_name,
         "mode": "test",
         "data_source": data_source,
         "synthesizer": synthesizer_from_data_source(data_source),
@@ -159,6 +161,7 @@ def evaluate_utility(
     data_source: str,
     model_type: str,
     use_wandb: bool = False,
+    dataset_name: str = "adult_census",
 ) -> None:
     """Evaluate a trained classifier on the real held-out test split."""
     model, preprocessor, metadata, model_path = load_saved_model(
@@ -178,6 +181,7 @@ def evaluate_utility(
         classifier_name=classifier_name,
         df=test_df,
         preprocessor=preprocessor,
+        dataset_name=dataset_name,
     )
 
     run_name = (
@@ -193,6 +197,7 @@ def evaluate_utility(
         random_state=random_state,
         use_wandb=use_wandb,
         model_path=model_path,
+        dataset_name=dataset_name,
     )
 
     print(
@@ -227,6 +232,11 @@ def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate saved classifiers on the real held-out test split."
+    )
+    parser.add_argument(
+        "--dataset",
+        default="adult_census",
+        help="Dataset configuration to use.",
     )
     parser.add_argument(
         "--classifier",
