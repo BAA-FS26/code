@@ -7,11 +7,11 @@ import streamlit as st
 
 from src.dashboard.charts.categorical import grouped_metric_bars
 from src.dashboard.charts.dp import dp_metric_grid
-from src.dashboard.display import build_base_row
 from src.dashboard.loader import (
     Result,
     RunMode,
     add_percent_metrics,
+    build_base_row,
     epsilon_of,
     prepare_records,
     result_key,

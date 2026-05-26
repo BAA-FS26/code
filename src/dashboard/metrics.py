@@ -10,22 +10,6 @@ FIDELITY_KEYS = {
     "Data structure": "diagnostic_data_structure",
 }
 
-PRIVACY_METRICS = [
-    "Singling Out (multivariate)",
-    "Inference (income)",
-    "Inference (occupation)",
-    "Inference (sex)",
-    "Inference (relationship)",
-]
-PRIVACY_KEYS = {
-    "Singling Out (univariate)": "singling_out_risk_univariate",
-    "Singling Out (multivariate)": "singling_out_risk_multivariate",
-    "Linkability": "linkability_risk",
-    "Inference (income)": "inference_risk_income",
-    "Inference (occupation)": "inference_risk_occupation",
-    "Inference (sex)": "inference_risk_sex",
-    "Inference (relationship)": "inference_risk_relationship",
-}
 DCR_KEYS = {
     "DCR-Baseline-Protection": "dcr_baseline_protection",
     "DCR-Overfitting-Protection": "dcr_overfitting_protection",

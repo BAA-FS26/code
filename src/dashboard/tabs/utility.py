@@ -6,13 +6,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.dashboard.charts.base import apply_common_layout
+from src.dashboard.charts.base import apply_common_layout, get_color
 from src.dashboard.charts.dp import dp_epsilon_chart
 from src.dashboard.config import CLASSIFIER_LABELS
-from src.dashboard.display import build_base_row, get_color
 from src.dashboard.loader import (
     Result,
     RunMode,
+    add_percent_metrics,
+    build_base_row,
     classifier_key,
     prepare_records,
     summary,
@@ -75,17 +76,25 @@ def build_utility_rows(records: list[Result]) -> list[dict]:
         metrics = summary(record)
 
         row = build_base_row(record)
-
         row.update(
             {
                 "ClassifierKey": classifier,
                 "Classifier": CLASSIFIER_LABELS.get(classifier, classifier),
-                "Accuracy": to_percent(metrics.get("test_accuracy")),
-                "Precision": to_percent(metrics.get("test_precision_macro")),
-                "Recall": to_percent(metrics.get("test_recall_macro")),
-                "F1 (macro)": to_percent(metrics.get("test_f1_macro")),
             }
         )
+
+        add_percent_metrics(
+            row,
+            metrics,
+            {
+                "Accuracy": "test_accuracy",
+                "Precision": "test_precision_macro",
+                "Recall": "test_recall_macro",
+                "F1 (macro)": "test_f1_macro",
+            },
+        )
+
+        rows.append(row)
 
     return rows
 

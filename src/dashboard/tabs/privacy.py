@@ -1,6 +1,7 @@
 """Privacy tab rendering."""
 
 from __future__ import annotations
+from typing import List
 
 import pandas as pd
 import streamlit as st
@@ -8,18 +9,19 @@ import streamlit as st
 from src.dashboard.charts.categorical import grouped_metric_bars
 from src.dashboard.charts.dp import dp_epsilon_chart, dp_metric_grid
 from src.dashboard.charts.heatmaps import heatmap
-from src.dashboard.display import build_base_row
+from src.dashboard.dataset_views import build_privacy_metric_config
 from src.dashboard.loader import (
     Result,
     RunMode,
     add_percent_metrics,
+    build_base_row,
     epsilon_of,
     prepare_records,
     result_key,
     summary,
     synthesizer_key,
 )
-from src.dashboard.metrics import DCR_KEYS, PRIVACY_KEYS, PRIVACY_METRICS
+from src.dashboard.metrics import DCR_KEYS
 from src.utility.constants import DP_SYNTHESIZERS
 
 
@@ -35,6 +37,7 @@ def render_privacy_tab(
         "**FF2 — Privacy:** Re-identification and inference risks measured via "
         "Anonymeter (singling-out, linkability, inference) and SDMetrics DCR analysis."
     )
+    privacy_metrics, privacy_keys = build_privacy_metric_config()
 
     filtered = prepare_records(
         records,
@@ -48,20 +51,20 @@ def render_privacy_tab(
         st.info("No privacy results match the current filter.")
         return
 
-    df = pd.DataFrame(build_privacy_rows(filtered))
+    df = pd.DataFrame(build_privacy_rows(filtered, privacy_keys))
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
     non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
 
     if not non_dp_df.empty:
-        render_non_dp_heatmap(non_dp_df)
+        render_non_dp_heatmap(non_dp_df, privacy_metrics)
         render_non_dp_dcr(non_dp_df)
 
     if not dp_df.empty:
         st.plotly_chart(
             dp_metric_grid(
                 df,
-                metrics=PRIVACY_METRICS,
-                titles=PRIVACY_METRICS,
+                metrics=privacy_metrics,
+                titles=privacy_metrics,
                 title="Anonymeter Risk Scores of DP Synthesizer across ε",
                 dp_synths=set(DP_SYNTHESIZERS),
                 baseline_synths=set(non_dp_df["Synthesizer"]),
@@ -81,7 +84,10 @@ def render_privacy_tab(
     render_raw_table(df)
 
 
-def build_privacy_rows(records: list[Result]) -> list[dict]:
+def build_privacy_rows(
+    records: list[Result],
+    privacy_keys: dict[str, str],
+) -> list[dict]:
     """Transform privacy result records into dataframe rows in percent units."""
     rows: list[dict] = []
     for record in sorted(
@@ -90,7 +96,7 @@ def build_privacy_rows(records: list[Result]) -> list[dict]:
         metrics = summary(record)
         row = build_base_row(record)
         metrics = summary(record)
-        add_percent_metrics(row, metrics, PRIVACY_KEYS)
+        add_percent_metrics(row, metrics, privacy_keys)
         add_percent_metrics(row, metrics, DCR_KEYS)
         rows.append(row)
     return rows
@@ -119,11 +125,11 @@ def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_non_dp_heatmap(non_dp_df: pd.DataFrame) -> None:
+def render_non_dp_heatmap(non_dp_df: pd.DataFrame, privacy_metrics: List[str]) -> None:
     """Render non-DP Anonymeter risks as a compact heatmap."""
     rows: list[dict] = []
     for _, row in non_dp_df.iterrows():
-        for metric in PRIVACY_METRICS:
+        for metric in privacy_metrics:
             if pd.notna(row.get(metric)):
                 rows.append(
                     {

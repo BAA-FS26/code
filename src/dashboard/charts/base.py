@@ -5,7 +5,15 @@ from typing import TypeAlias
 
 import plotly.graph_objects as go
 
-from src.dashboard.config import COLORS, GRID_COLOR, SYNTHESIZER_LABELS, TRANSPARENT
+from src.dashboard.config import (
+    COLORS,
+    DEFAULT_COLOR,
+    EPSILON_SHADE,
+    GRID_COLOR,
+    SYNTHESIZER_LABELS,
+    TRANSPARENT,
+)
+from src.utility.constants import DP_SYNTHESIZERS
 
 FormattableValue: TypeAlias = Real | str | None
 
@@ -50,3 +58,17 @@ def synth_label(synth: str) -> str:
 def synth_color(synth: str) -> str:
     """Return thesis-style color for a synthesizer."""
     return COLORS.get(synth, "#94A3B8")
+
+
+def get_color(synth: str, epsilon: float | None = None) -> str:
+    """Return a stable color for a synthesizer/epsilon pair."""
+    base_hex = COLORS.get(synth, DEFAULT_COLOR)
+    if epsilon is None or synth not in DP_SYNTHESIZERS:
+        return base_hex
+
+    shade = EPSILON_SHADE.get(epsilon, 1.0)
+    red, green, blue = (int(base_hex[i : i + 2], 16) for i in (1, 3, 5))
+    shaded = [
+        round(channel * shade + 255 * (1 - shade)) for channel in (red, green, blue)
+    ]
+    return "#{:02X}{:02X}{:02X}".format(*shaded)

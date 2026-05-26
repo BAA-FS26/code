@@ -6,8 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.dashboard.charts.base import apply_common_layout, synth_label
-from src.dashboard.display import get_color
+from src.dashboard.charts.base import apply_common_layout, get_color, synth_label
 from src.dashboard.loader import (
     Result,
     RunMode,

@@ -11,14 +11,7 @@ from typing import Any, Literal, Mapping, cast
 
 import streamlit as st
 
-from src.dashboard.config import (
-    COLORS,
-    DEFAULT_COLOR,
-    EPSILON_SHADE,
-    SYNTHESIZER_LABELS,
-)
-from src.dashboard.display import source_label
-from src.utility.constants import DP_SYNTHESIZERS
+from src.dashboard.config import SYNTHESIZER_LABELS
 
 LOGGER = logging.getLogger(__name__)
 Result = dict[str, Any]
@@ -259,6 +252,25 @@ def prepare_records(
         run_mode,
         selected_date,
     )
+
+def source_label(synth: str, epsilon: float | None) -> str:
+    """Return a readable label for a synthesizer/epsilon pair."""
+    label = SYNTHESIZER_LABELS.get(synth, synth)
+    return f"{label} ε={epsilon:g}" if epsilon is not None else label
+
+
+def build_base_row(record: Result) -> dict[str, Any]:
+    """Build shared dataframe metadata columns for dashboard tables/charts."""
+    synth = synthesizer_key(record)
+    epsilon = epsilon_of(record)
+
+    return {
+        "Source": source_label(synth, epsilon),
+        "Synthesizer": synth,
+        "Epsilon": epsilon,
+        "Run date": run_date(record),
+        "Timestamp": run_timestamp(record),
+    }
 
 
 def add_percent_metrics(
