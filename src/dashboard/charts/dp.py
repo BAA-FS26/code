@@ -1,4 +1,4 @@
-""" """
+"""DP epsilon chart helpers and baseline comparison utilities."""
 
 import pandas as pd
 import plotly.graph_objects as go

@@ -100,7 +100,6 @@ def build_fidelity_rows(records: list[Result]) -> list[dict]:
         records, key=lambda item: (synthesizer_key(item), epsilon_of(item) or 0)
     ):
         row = build_base_row(record)
-        row = build_base_row(record)
         add_percent_metrics(row, summary(record), FIDELITY_KEYS)
         rows.append(row)
     return rows

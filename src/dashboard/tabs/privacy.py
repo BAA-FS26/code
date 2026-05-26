@@ -1,7 +1,6 @@
 """Privacy tab rendering."""
 
 from __future__ import annotations
-from typing import List
 
 import pandas as pd
 import streamlit as st
@@ -95,7 +94,6 @@ def build_privacy_rows(
     ):
         metrics = summary(record)
         row = build_base_row(record)
-        metrics = summary(record)
         add_percent_metrics(row, metrics, privacy_keys)
         add_percent_metrics(row, metrics, DCR_KEYS)
         rows.append(row)
@@ -125,7 +123,7 @@ def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_non_dp_heatmap(non_dp_df: pd.DataFrame, privacy_metrics: List[str]) -> None:
+def render_non_dp_heatmap(non_dp_df: pd.DataFrame, privacy_metrics: list[str]) -> None:
     """Render non-DP Anonymeter risks as a compact heatmap."""
     rows: list[dict] = []
     for _, row in non_dp_df.iterrows():

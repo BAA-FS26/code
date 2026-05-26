@@ -17,7 +17,6 @@ from src.dashboard.loader import (
     classifier_key,
     prepare_records,
     summary,
-    to_percent,
     utility_key,
 )
 from src.dashboard.metrics import RAW_TABLE_COLUMNS
@@ -100,7 +99,7 @@ def build_utility_rows(records: list[Result]) -> list[dict]:
 
 
 def aggregate_utility_by_source(df: pd.DataFrame) -> pd.DataFrame:
-    """Average utility metrics across classifiers per synthesizer, epsilon, and run."""
+    """Average utility metrics across classifiers per synthesizer, epsilon, and run date."""
     group_cols = ["Source", "Synthesizer", "Epsilon", "Run date"]
 
     return df.groupby(group_cols, dropna=False, as_index=False).agg(

@@ -1,4 +1,4 @@
-""" """
+"""Shared dashboard chart styling, formatting, and color helpers."""
 
 from numbers import Real
 from typing import TypeAlias

@@ -1,4 +1,4 @@
-""" """
+"""Grouped categorical comparison charts for dashboard metrics."""
 
 import pandas as pd
 import plotly.graph_objects as go
