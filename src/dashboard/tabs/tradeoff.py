@@ -75,7 +75,7 @@ def build_tradeoff_dataframe(
     run_mode: str,
     selected_date: str | None,
 ) -> pd.DataFrame:
-    """Combine best utility F1 and privacy risk by synthesizer/epsilon."""
+    """Combine average utility F1 and privacy risk by synthesizer/epsilon."""
     utility_latest = select_runs(
         filter_results(utility_records, selected_synths, selected_epsilons),
         utility_key,
@@ -93,12 +93,17 @@ def build_tradeoff_dataframe(
         date = run_date(record) if run_mode == "All runs" else None
         return (synthesizer_key(record), epsilon_of(record), date)
 
-    best_f1: dict[tuple[str, float | None, str | None], float] = {}
+    f1_values: dict[tuple[str, float | None, str | None], list[float]] = {}
+
     for record in utility_latest:
         key = join_key(record)
         f1 = summary(record).get("test_f1_macro")
         if f1 is not None:
-            best_f1[key] = max(best_f1.get(key, 0), float(f1))
+            f1_values.setdefault(key, []).append(float(f1))
+
+    avg_f1 = {
+        key: sum(values) / len(values) for key, values in f1_values.items() if values
+    }
 
     risk_map: dict[tuple[str, float | None, str | None], float] = {}
     for record in privacy_latest:
@@ -108,7 +113,7 @@ def build_tradeoff_dataframe(
             risk_map[key] = float(risk)
 
     rows = []
-    all_keys = set(best_f1) | set(risk_map)
+    all_keys = set(avg_f1) | set(risk_map)
     if not all_keys:
         return pd.DataFrame(
             columns=[
@@ -128,8 +133,8 @@ def build_tradeoff_dataframe(
         label = source_label(synth, epsilon)
         if date is not None:
             label = f"{label} ({date})"
-        
-        test_f1_raw = best_f1.get((synth, epsilon, date))
+
+        test_f1_raw = avg_f1.get((synth, epsilon, date))
         risk_raw = risk_map.get((synth, epsilon, date))
         rows.append(
             {
@@ -164,7 +169,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
         )
 
     fig.update_layout(
-        title="Privacy-utility trade-off (best F1 vs singling-out multivariate risk)",
+        title="Privacy-utility trade-off (average F1 vs singling-out multivariate risk)",
         xaxis=dict(
             title="Privacy risk — singling-out multivariate (↓ safer)",
             tickformat=".3f",
