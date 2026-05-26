@@ -20,12 +20,17 @@ from src.dashboard.config import (
 from src.utility.constants import DP_SYNTHESIZERS
 
 LOGGER = logging.getLogger(__name__)
-RESULT_CATEGORIES = ("fidelity", "privacy", "utility")
-RUN_MODES = ("Latest only", "Specific date", "All runs")
 Result = dict[str, Any]
 ResultMap = dict[str, list[Result]]
 RecordKey = tuple[Any, ...]
 RunMode = Literal["Latest only", "Specific date", "All runs"]
+
+RESULT_CATEGORIES = ("fidelity", "privacy", "utility")
+RUN_MODES: tuple[RunMode, ...] = (
+    "Latest only",
+    "Specific date",
+    "All runs",
+)
 
 
 @st.cache_data(show_spinner=False)
@@ -206,15 +211,22 @@ def get_color(synth: str, epsilon: float | None = None) -> str:
 
 
 def latest_by(
-    records: Iterable[Result], key_fn: Callable[[Result], RecordKey]
+    records: Iterable[Result],
+    key_fn: Callable[[Result], RecordKey],
 ) -> list[Result]:
     """Keep only the newest result for each key, based on the timestamp field."""
     latest: dict[RecordKey, Result] = {}
+    latest_timestamps: dict[RecordKey, str] = {}
+
     for record in records:
         key = key_fn(record)
         timestamp = run_timestamp(record)
-        if key not in latest or timestamp > run_timestamp(latest[key]):
+
+        current = latest_timestamps.get(key)
+        if current is None or timestamp > current:
             latest[key] = record
+            latest_timestamps[key] = timestamp
+
     return list(latest.values())
 
 
@@ -229,12 +241,23 @@ def utility_key(record: Result) -> RecordKey:
 
 
 def filter_results(
-    records: Iterable[Result], selected_synths: set[str], selected_epsilons: set[float]
+    records: Iterable[Result],
+    selected_synths: set[str],
+    selected_epsilons: set[float],
 ) -> list[Result]:
     """Apply dashboard synthesizer and epsilon filters."""
-    return [
-        record
-        for record in records
-        if synthesizer_key(record) in selected_synths
-        and (epsilon_of(record) is None or epsilon_of(record) in selected_epsilons)
-    ]
+    filtered: list[Result] = []
+
+    for record in records:
+        synth = synthesizer_key(record)
+        epsilon = epsilon_of(record)
+
+        if synth not in selected_synths:
+            continue
+
+        if epsilon is not None and epsilon not in selected_epsilons:
+            continue
+
+        filtered.append(record)
+
+    return filtered

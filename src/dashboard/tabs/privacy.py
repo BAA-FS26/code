@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from src.dashboard.charts import (
-    apply_common_layout,
+    dp_epsilon_chart,
     dp_metric_grid,
     grouped_metric_bars,
     heatmap,
@@ -15,6 +14,7 @@ from src.dashboard.charts import (
 )
 from src.dashboard.loader import (
     Result,
+    RunMode,
     epsilon_of,
     filter_results,
     result_key,
@@ -53,7 +53,7 @@ def render_privacy_tab(
     records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
-    run_mode: str,
+    run_mode: RunMode,
     selected_date: str | None,
 ) -> None:
     """Render thesis-style privacy charts."""
@@ -65,7 +65,7 @@ def render_privacy_tab(
     filtered = select_runs(
         filter_results(records, selected_synths, selected_epsilons),
         result_key,
-        run_mode,  # type: ignore[arg-type]
+        run_mode, 
         selected_date,
     )
     if not filtered:
@@ -134,44 +134,22 @@ def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()].dropna(
         subset=["DCR-Baseline-Protection"]
     )
+
     if dp_df.empty:
         return
 
-    fig = go.Figure()
-    legend_seen: set[str] = set()
-    for synth, group in dp_df.groupby("Synthesizer"):
-        group = group.sort_values("Epsilon")
-        label = source_label(str(synth), None)
-        fig.add_trace(
-            go.Scatter(
-                x=group["Epsilon"],
-                y=group["DCR-Baseline-Protection"],
-                mode="lines+markers",
-                name=label,
-                marker=dict(size=9),
-                line=dict(width=3),
-                showlegend=label not in legend_seen,
-            )
-        )
-        legend_seen.add(label)
-
-    for _, baseline in non_dp_df.dropna(subset=["DCR-Baseline-Protection"]).iterrows():
-        fig.add_hline(
-            y=float(baseline["DCR-Baseline-Protection"]),
-            line_dash="dash",
-            line_width=2,
-            annotation_text=source_label(str(baseline["Synthesizer"]), None),
-            annotation_position="right",
-        )
-
-    fig.update_xaxes(title_text="Privacy-Budget ε", type="log")
-    fig.update_yaxes(title_text="DCR-Baseline-Protection (%)", range=[0, 100])
-    st.plotly_chart(
-        apply_common_layout(
-            fig, title="DCR Baseline Protection of DP Synthesizer across ε", height=520
-        ),
-        use_container_width=True,
+    fig = dp_epsilon_chart(
+        df=df,
+        metric="DCR-Baseline-Protection",
+        title="DCR Baseline Protection of DP Synthesizer across ε",
+        dp_synths=set(DP_SYNTHESIZERS),
+        baseline_synths=set(non_dp_df["Synthesizer"]),
+        y_title="DCR-Baseline-Protection (%)",
+        y_range=[0, 100],
+        height=520,
     )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_non_dp_heatmap(non_dp_df: pd.DataFrame) -> None:

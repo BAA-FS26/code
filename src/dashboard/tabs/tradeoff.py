@@ -6,9 +6,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.dashboard.config import GRID_COLOR, TRANSPARENT
+from src.dashboard.charts import apply_common_layout
 from src.dashboard.loader import (
     Result,
+    RunMode,
     epsilon_of,
     filter_results,
     get_color,
@@ -30,7 +31,7 @@ def render_tradeoff_tab(
     privacy_records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
-    run_mode: str,
+    run_mode: RunMode,
     selected_date: str | None,
 ) -> None:
     """Render privacy/utility trade-off charts and table."""
@@ -72,20 +73,20 @@ def build_tradeoff_dataframe(
     privacy_records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
-    run_mode: str,
+    run_mode: RunMode,
     selected_date: str | None,
 ) -> pd.DataFrame:
     """Combine average utility F1 and privacy risk by synthesizer/epsilon."""
     utility_latest = select_runs(
         filter_results(utility_records, selected_synths, selected_epsilons),
         utility_key,
-        run_mode,  # type: ignore[arg-type]
+        run_mode,
         selected_date,
     )
     privacy_latest = select_runs(
         filter_results(privacy_records, selected_synths, selected_epsilons),
         result_key,
-        run_mode,  # type: ignore[arg-type]
+        run_mode,
         selected_date,
     )
 
@@ -176,27 +177,28 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
             )
         )
 
-    fig.update_layout(
-        title="Privacy-utility trade-off (average F1 vs singling-out multivariate risk)",
-        xaxis=dict(
-            title="Privacy risk — singling-out multivariate (↓ safer)",
-            tickformat=".3f",
-            range=[0, 11],
-        ),
-        yaxis=dict(
-            title="Utility — F1 macro (↑ better)",
-            tickformat=".3f",
-            range=[0, 105.0],
-        ),
-        height=500,
-        plot_bgcolor=TRANSPARENT,
-        paper_bgcolor=TRANSPARENT,
-        legend=dict(orientation="h", y=-0.2),
-        margin=dict(t=60, b=100),
+    fig.update_xaxes(
+        title_text="Privacy risk — singling-out multivariate (↓ safer)",
+        tickformat=".3f",
+        range=[0, 11],
     )
-    fig.update_xaxes(gridcolor=GRID_COLOR)
-    fig.update_yaxes(gridcolor=GRID_COLOR)
-    st.plotly_chart(fig, use_container_width=True)
+
+    fig.update_yaxes(
+        title_text="Utility — F1 macro (↑ better)",
+        tickformat=".3f",
+        range=[0, 105.0],
+    )
+
+    st.plotly_chart(
+        apply_common_layout(
+            fig,
+            title="Privacy-utility trade-off (average F1 vs singling-out multivariate risk)",
+            height=500,
+            bottom_margin=100,
+            hovermode="closest",
+        ),
+        use_container_width=True,
+    )
 
 
 def render_summary_table(df: pd.DataFrame) -> None:

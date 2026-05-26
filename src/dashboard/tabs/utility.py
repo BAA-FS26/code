@@ -8,13 +8,13 @@ import streamlit as st
 
 from src.dashboard.charts import (
     apply_common_layout,
-    synth_color,
-    synth_label,
+    dp_epsilon_chart,
     to_percent,
 )
 from src.dashboard.config import CLASSIFIER_LABELS
 from src.dashboard.loader import (
     Result,
+    RunMode,
     classifier_key,
     epsilon_of,
     filter_results,
@@ -37,7 +37,7 @@ def render_utility_tab(
     records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
-    run_mode: str,
+    run_mode: RunMode,
     selected_date: str | None,
 ) -> None:
     """Render utility charts and classifier-level result table."""
@@ -49,7 +49,7 @@ def render_utility_tab(
     selected_records = select_runs(
         filter_results(records, selected_synths, selected_epsilons),
         utility_key,
-        run_mode,  # type: ignore[arg-type]
+        run_mode,
         selected_date,
     )
     if not selected_records:
@@ -120,41 +120,25 @@ def aggregate_utility_by_source(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_dp_utility(df: pd.DataFrame) -> None:
     """Render average macro-F1 across ε for DP synthesizers."""
-    dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
-    baseline_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
-
-    if dp_df.empty:
+    if df.empty:
         return
 
-    fig = go.Figure()
-
-    for synth, group in dp_df.groupby("Synthesizer"):
-        group = group.sort_values("Epsilon")
-        fig.add_trace(
-            go.Scatter(
-                x=group["Epsilon"],
-                y=group["F1 (macro)"],
-                mode="lines+markers",
-                name=synth_label(str(synth)),
-                line=dict(color=synth_color(str(synth)), width=3),
-                marker=dict(size=9),
-            )
-        )
-
-    add_baseline_lines(fig, baseline_df)
-
-    fig.update_xaxes(title_text="Privacy Budget ε", type="log")
-    fig.update_yaxes(title_text="Average Macro-F1 Score (%)", range=[0, 100])
-
-    st.plotly_chart(
-        apply_common_layout(
-            fig,
-            title="Average Utility of DP Synthesizers across ε",
-            height=500,
-            bottom_margin=70,
-        ),
-        use_container_width=True,
+    fig = dp_epsilon_chart(
+        df=df,
+        metric="F1 (macro)",
+        title="Average Utility of DP Synthesizers across ε",
+        dp_synths=set(DP_SYNTHESIZERS),
+        baseline_synths={
+            synth
+            for synth in df["Synthesizer"].unique()
+            if synth not in DP_SYNTHESIZERS
+        },
+        y_title="Average Macro-F1 Score (%)",
+        y_range=[0, 100],
+        height=500,
     )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_average_utility_lollipop(df: pd.DataFrame) -> None:
@@ -165,36 +149,24 @@ def render_average_utility_lollipop(df: pd.DataFrame) -> None:
         return
 
     baseline = float(real_df["F1 (macro)"].mean())
-    plot_df = build_lollipop_dataframe(df)
 
+    plot_df = build_lollipop_dataframe(df)
     if plot_df.empty:
         st.info("No synthetic utility results match the current filters.")
         return
 
-    plot_df = plot_df.sort_values("F1 (macro)", ascending=False).reset_index(drop=True)
+    plot_df = plot_df.sort_values(
+        "F1 (macro)",
+        ascending=False,
+    ).reset_index(drop=True)
 
-    fig = go.Figure()
-    add_real_baseline(fig, baseline)
-
-    for x_position, (_, row) in enumerate(plot_df.iterrows()):
-        add_lollipop_marker(fig, row, x_position, baseline)
-
-    fig.update_xaxes(
-        tickmode="array",
-        tickvals=list(range(len(plot_df))),
-        ticktext=list(plot_df["Source"]),
+    fig = build_lollipop_chart(
+        plot_df,
+        baseline=baseline,
+        title="Average Utility Compared to Real Data",
     )
-    fig.update_yaxes(title_text="Average Macro-F1 Score (%)", range=[0, 100])
 
-    st.plotly_chart(
-        apply_common_layout(
-            fig,
-            title="Average Utility Compared to Real Data",
-            height=520,
-            bottom_margin=110,
-        ),
-        use_container_width=True,
-    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def build_lollipop_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -243,22 +215,15 @@ def select_epsilon(dp_df: pd.DataFrame) -> float | None:
         )
 
 
-def add_baseline_lines(fig: go.Figure, baseline_df: pd.DataFrame) -> None:
-    """Add dashed baseline lines to a figure."""
-    for _, baseline in baseline_df.dropna(subset=["F1 (macro)"]).iterrows():
-        synth = str(baseline["Synthesizer"])
-        fig.add_hline(
-            y=float(baseline["F1 (macro)"]),
-            line_dash="dash",
-            line_color=synth_color(synth),
-            line_width=2,
-            annotation_text=synth_label(synth),
-            annotation_position="right",
-        )
+def build_lollipop_chart(
+    df: pd.DataFrame,
+    *,
+    baseline: float,
+    title: str,
+) -> go.Figure:
+    """Build lollipop chart comparing utility against real baseline."""
+    fig = go.Figure()
 
-
-def add_real_baseline(fig: go.Figure, baseline: float) -> None:
-    """Add real-data baseline to the lollipop chart."""
     fig.add_hline(
         y=baseline,
         line_dash="dash",
@@ -268,45 +233,60 @@ def add_real_baseline(fig: go.Figure, baseline: float) -> None:
         annotation_position="top left",
     )
 
+    for x_position, (_, row) in enumerate(df.iterrows()):
+        y = float(row["F1 (macro)"])
+        synth = str(row["Synthesizer"])
+        epsilon = row["Epsilon"] if pd.notna(row["Epsilon"]) else None
+        color = get_color(synth, epsilon)
 
-def add_lollipop_marker(
-    fig: go.Figure,
-    row: pd.Series,
-    x_position: int,
-    baseline: float,
-) -> None:
-    """Add one lollipop marker and its distance line."""
-    y = float(row["F1 (macro)"])
-    synth = str(row["Synthesizer"])
-    epsilon = row["Epsilon"] if pd.notna(row["Epsilon"]) else None
-    color = get_color(synth, epsilon)
+        fig.add_shape(
+            type="line",
+            x0=x_position,
+            x1=x_position,
+            y0=y,
+            y1=baseline,
+            line=dict(color=color, width=2),
+        )
 
-    fig.add_shape(
-        type="line",
-        x0=x_position,
-        x1=x_position,
-        y0=y,
-        y1=baseline,
-        line=dict(color=color, width=2),
+        fig.add_trace(
+            go.Scatter(
+                x=[x_position],
+                y=[y],
+                mode="markers+text",
+                marker=dict(
+                    size=16,
+                    color=color,
+                    line=dict(color="black", width=1.5),
+                ),
+                text=[f"{y:.1f}%"],
+                textposition="bottom center",
+                name=str(row["Source"]),
+                hovertemplate=(
+                    f"{row['Source']}<br>"
+                    f"Average F1: {y:.1f}%<br>"
+                    f"Loss vs real: {baseline - y:.1f} pp"
+                    "<extra></extra>"
+                ),
+                showlegend=False,
+            )
+        )
+
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=list(range(len(df))),
+        ticktext=list(df["Source"]),
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=[x_position],
-            y=[y],
-            mode="markers+text",
-            marker=dict(size=16, color=color, line=dict(color="black", width=1.5)),
-            text=[f"{y:.1f}%"],
-            textposition="bottom center",
-            name=str(row["Source"]),
-            hovertemplate=(
-                f"{row['Source']}<br>"
-                f"Average F1: {y:.1f}%<br>"
-                f"Loss vs real: {baseline - y:.1f} pp"
-                "<extra></extra>"
-            ),
-            showlegend=False,
-        )
+    fig.update_yaxes(
+        title_text="Average Macro-F1 Score (%)",
+        range=[0, 100],
+    )
+
+    return apply_common_layout(
+        fig,
+        title=title,
+        height=520,
+        bottom_margin=110,
     )
 
 

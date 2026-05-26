@@ -8,6 +8,7 @@ import streamlit as st
 from src.dashboard.charts import dp_metric_grid, grouped_metric_bars, to_percent
 from src.dashboard.loader import (
     Result,
+    RunMode,
     epsilon_of,
     filter_results,
     result_key,
@@ -35,7 +36,7 @@ def render_fidelity_tab(
     records: list[Result],
     selected_synths: set[str],
     selected_epsilons: set[float],
-    run_mode: str,
+    run_mode: RunMode,
     selected_date: str | None,
 ) -> None:
     """Render thesis-style fidelity charts and table."""
@@ -47,7 +48,7 @@ def render_fidelity_tab(
     filtered = select_runs(
         filter_results(records, selected_synths, selected_epsilons),
         result_key,
-        run_mode,  # type: ignore[arg-type]
+        run_mode,  
         selected_date,
     )
     if not filtered:
@@ -86,7 +87,7 @@ def render_fidelity_tab(
                     "Column-pair trends",
                     "Quality overall",
                 ],
-                title="Fidelity of the DP synthesizer across ε",
+                title="Fidelity of the DP synthesizers across ε",
                 dp_synths=set(DP_SYNTHESIZERS),
                 baseline_synths=set(non_dp_df["Synthesizer"]),
                 y_title="Score (%)",

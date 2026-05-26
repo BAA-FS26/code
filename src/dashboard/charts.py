@@ -1,9 +1,9 @@
-"""Reusable Plotly chart helpers with thesis-style visual grammar."""
+"""Reusable Plotly chart helpers"""
 
 from __future__ import annotations
 
 from numbers import Real
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,6 +20,7 @@ def apply_common_layout(
     height: int = 420,
     bottom_margin: int = 80,
     title: str | None = None,
+    hovermode: str | None = "x unified",
 ) -> go.Figure:
     """Apply a shared scientific/dashboard chart style."""
     fig.update_layout(
@@ -29,7 +30,7 @@ def apply_common_layout(
         paper_bgcolor=TRANSPARENT,
         margin=dict(t=70 if title else 50, b=bottom_margin, l=60, r=30),
         legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center", yanchor="bottom"),
-        hovermode="x unified",
+        hovermode=hovermode,
     )
     fig.update_xaxes(showgrid=True, gridcolor=GRID_COLOR, zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor=GRID_COLOR, zeroline=False)
@@ -49,8 +50,9 @@ def to_percent(value: object) -> float | None:
     """Convert result metrics stored as 0..1 fractions into percentage points."""
     if value is None:
         return None
+
     try:
-        return float(value) * 100 # type: ignore
+        return float(cast(float, value)) * 100
     except (TypeError, ValueError):
         return None
 
@@ -65,41 +67,156 @@ def synth_color(synth: str) -> str:
     return COLORS.get(synth, "#94A3B8")
 
 
+def add_baseline_line(
+    fig: go.Figure,
+    *,
+    value: float,
+    label: str,
+    color: str,
+    row: int | None = None,
+    col: int | None = None,
+    showlegend: bool = True,
+    annotation_text: str | None = None,
+    annotation_position: str = "right",
+) -> None:
+    """Add one dashed horizontal baseline line and optional legend entry."""
+    if row is not None and col is not None:
+        fig.add_hline(
+            y=value,
+            line_dash="dash",
+            line_color=color,
+            line_width=2,
+            annotation_text=annotation_text,
+            annotation_position=annotation_position,
+            row=row,   # type: ignore
+            col=col,   # type: ignore
+        )
+    else:
+        fig.add_hline(
+            y=value,
+            line_dash="dash",
+            line_color=color,
+            line_width=2,
+            annotation_text=annotation_text,
+            annotation_position=annotation_position,
+        )
+
+    baseline_trace = go.Scatter(
+        x=[None],
+        y=[None],
+        mode="lines",
+        name=label,
+        line=dict(color=color, dash="dash", width=2),
+        showlegend=showlegend,
+        hoverinfo="skip",
+    )
+
+    if row is not None and col is not None:
+        fig.add_trace(baseline_trace, row=row, col=col)
+    else:
+        fig.add_trace(baseline_trace)
+
+
 def add_baseline_lines(
     fig: go.Figure,
     baselines: pd.DataFrame,
     *,
     metric: str,
-    row: int = 1,
-    col: int = 1,
+    row: int | None = None,
+    col: int | None = None,
     showlegend: bool = True,
+    annotate: bool = False,
 ) -> None:
-    """Add dashed horizontal non-DP/real baseline traces to a subplot."""
+    """Add dashed horizontal baseline lines from a baseline dataframe."""
     for _, baseline in baselines.dropna(subset=[metric]).iterrows():
         synth = str(baseline["Synthesizer"])
+        label = synth_label(synth)
         value = float(baseline[metric])
-        fig.add_hline(
-            y=value,
-            line_dash="dash",
-            line_color=synth_color(synth),
-            line_width=2,
-            row=row, # type: ignore
-            col=col, # type: ignore
+
+        add_baseline_line(
+            fig,
+            value=value,
+            label=label,
+            color=synth_color(synth),
+            row=row,
+            col=col,
+            showlegend=showlegend,
+            annotation_text=label if annotate else None,
         )
-        # Invisible scatter keeps the dashed baseline in the legend.
+
+
+def add_dp_epsilon_traces(
+    fig: go.Figure,
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    legend_seen: set[str] | None = None,
+    row: int | None = None,
+    col: int | None = None,
+) -> set[str]:
+    """Add DP ε line traces grouped by synthesizer."""
+    if legend_seen is None:
+        legend_seen = set()
+
+    for synth, group in df.dropna(subset=[metric]).groupby("Synthesizer"):
+        group = group.sort_values("Epsilon")
+        synth_name = str(synth)
+        label = synth_label(synth_name)
+
         fig.add_trace(
             go.Scatter(
-                x=[None],
-                y=[None],
-                mode="lines",
-                name=synth_label(synth),
-                line=dict(color=synth_color(synth), dash="dash", width=2),
-                showlegend=showlegend,
-                hoverinfo="skip",
+                x=group["Epsilon"],
+                y=group[metric],
+                mode="lines+markers",
+                name=label,
+                line=dict(color=synth_color(synth_name), width=3),
+                marker=dict(size=9),
+                showlegend=label not in legend_seen,
             ),
             row=row,
             col=col,
         )
+        legend_seen.add(label)
+
+    return legend_seen
+
+
+def dp_epsilon_chart(
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    title: str,
+    dp_synths: set[str],
+    baseline_synths: set[str],
+    y_title: str,
+    y_range: list[float] | None = None,
+    height: int = 500,
+    bottom_margin: int = 70,
+    annotate_baselines: bool = True,
+) -> go.Figure:
+    """Create a single DP ε line chart with optional baseline references."""
+    fig = go.Figure()
+
+    dp_df = df[df["Synthesizer"].isin(dp_synths) & df["Epsilon"].notna()]
+    baseline_df = df[df["Synthesizer"].isin(baseline_synths)]
+
+    add_dp_epsilon_traces(fig, dp_df, metric=metric)
+    add_baseline_lines(
+        fig,
+        baseline_df,
+        metric=metric,
+        annotate=annotate_baselines,
+    )
+
+    fig.update_xaxes(title_text="Privacy budget ε", type="log")
+    fig.update_yaxes(title_text=y_title, range=y_range)
+
+    return apply_common_layout(
+        fig,
+        title=title,
+        height=height,
+        bottom_margin=bottom_margin,
+    )
 
 
 def dp_metric_grid(
@@ -126,23 +243,15 @@ def dp_metric_grid(
     for idx, metric in enumerate(metrics):
         row = idx // cols + 1
         col = idx % cols + 1
-        for synth, group in dp_df.dropna(subset=[metric]).groupby("Synthesizer"):
-            group = group.sort_values("Epsilon")
-            label = synth_label(str(synth))
-            fig.add_trace(
-                go.Scatter(
-                    x=group["Epsilon"],
-                    y=group[metric],
-                    mode="lines+markers",
-                    name=label,
-                    line=dict(color=synth_color(str(synth)), width=3),
-                    marker=dict(size=9),
-                    showlegend=label not in legend_seen,
-                ),
-                row=row,
-                col=col,
-            )
-            legend_seen.add(label)
+
+        legend_seen = add_dp_epsilon_traces(
+            fig,
+            dp_df,
+            metric=metric,
+            legend_seen=legend_seen,
+            row=row,
+            col=col,
+        )
 
         add_baseline_lines(
             fig,
@@ -152,20 +261,33 @@ def dp_metric_grid(
             col=col,
             showlegend=idx == 0,
         )
+
         fig.update_xaxes(title_text="Privacy budget ε", type="log", row=row, col=col)
         fig.update_yaxes(
-            title_text=y_title if col == 1 else None, range=y_range, row=row, col=col
+            title_text=y_title if col == 1 else None,
+            range=y_range,
+            row=row,
+            col=col,
         )
 
-    for empty_idx in range(len(metrics), rows * cols):
-        fig.update_xaxes(
-            visible=False, row=empty_idx // cols + 1, col=empty_idx % cols + 1
-        )
-        fig.update_yaxes(
-            visible=False, row=empty_idx // cols + 1, col=empty_idx % cols + 1
-        )
+    hide_empty_subplots(fig, used=len(metrics), total=rows * cols, cols=cols)
 
     return apply_common_layout(fig, title=title, height=height, bottom_margin=70)
+
+
+def hide_empty_subplots(
+    fig: go.Figure,
+    *,
+    used: int,
+    total: int,
+    cols: int,
+) -> None:
+    """Hide unused subplot cells."""
+    for idx in range(used, total):
+        row = idx // cols + 1
+        col = idx % cols + 1
+        fig.update_xaxes(visible=False, row=row, col=col)
+        fig.update_yaxes(visible=False, row=row, col=col)
 
 
 def grouped_metric_bars(
@@ -180,16 +302,18 @@ def grouped_metric_bars(
 ) -> go.Figure:
     """Create thesis-style grouped bars for non-DP synthesizer comparisons."""
     fig = go.Figure()
+
     for metric, label in zip(metrics, metric_labels):
         fig.add_trace(
             go.Bar(
                 name=label,
                 x=df["Source"],
                 y=df[metric],
-                text=[format_value(v, ".1f") for v in df[metric]],
+                text=[format_value(value, ".1f") for value in df[metric]],
                 textposition="outside",
             )
         )
+
     if reference_line is not None:
         fig.add_hline(
             y=reference_line,
@@ -199,7 +323,10 @@ def grouped_metric_bars(
             annotation_text=f"reference: {reference_line:g} %",
             annotation_position="top left",
         )
-    fig.update_layout(barmode="group", yaxis=dict(title=y_title, range=y_range))
+
+    fig.update_layout(barmode="group")
+    fig.update_yaxes(title_text=y_title, range=y_range)
+
     return apply_common_layout(fig, title=title, height=500, bottom_margin=80)
 
 
@@ -216,6 +343,7 @@ def heatmap(
 ) -> go.Figure:
     """Create an annotated heatmap."""
     pivot = df.pivot_table(index=y, columns=x, values=z, aggfunc="first")
+
     fig = go.Figure(
         data=go.Heatmap(
             z=pivot.values,
@@ -225,9 +353,18 @@ def heatmap(
             zmin=zmin,
             zmax=zmax,
             colorbar=dict(title=colorbar_title),
-            text=[[format_value(v, ".2f") for v in row] for row in pivot.values],
+            text=[
+                [format_value(value, ".2f") for value in row] for row in pivot.values
+            ],
             texttemplate="%{text}",
             hovertemplate="%{y}<br>%{x}: %{z:.2f}<extra></extra>",
         )
     )
-    return apply_common_layout(fig, title=title, height=460, bottom_margin=70)
+
+    return apply_common_layout(
+        fig,
+        title=title,
+        height=460,
+        bottom_margin=70,
+        hovermode=None,
+    )

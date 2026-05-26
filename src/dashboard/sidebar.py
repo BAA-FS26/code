@@ -54,11 +54,11 @@ def render_synthesizer_filters(all_synths: set[str]) -> set[str]:
     """Render synthesizer checkboxes."""
     selected: set[str] = {"real"} if "real" in all_synths else set()
 
-    visible_synths = all_synths - {"real"}
+    visible_synths = all_synths.difference({"real"})
 
     groups = [
-        ("Synthesizers", sorted(visible_synths - DP_SYNTHESIZERS)),
-        ("DP Synthesizers", sorted(visible_synths & DP_SYNTHESIZERS)),
+        ("Synthesizers", sorted(visible_synths.difference(DP_SYNTHESIZERS))),
+        ("DP Synthesizers", sorted(visible_synths.intersection(DP_SYNTHESIZERS))),
     ]
 
     for heading, synths in groups:
@@ -90,7 +90,7 @@ def render_epsilon_filters(all_epsilons: set[float]) -> set[float]:
 def render_run_filters(all_results: ResultMap) -> tuple[RunMode, str | None]:
     """Render run selection controls."""
     st.sidebar.markdown("**Runs**")
-    run_mode = st.sidebar.radio(
+    run_mode: RunMode = st.sidebar.radio(
         "Display mode",
         RUN_MODES,
         index=0,
