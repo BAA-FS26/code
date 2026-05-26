@@ -158,12 +158,20 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
             go.Scatter(
                 x=[row[RISK_COLUMN]],
                 y=[row[F1_COLUMN]],
-                mode="markers+text",
+                mode="markers+text" if pd.isna(row["Epsilon"]) else "markers",
                 name=row["Source"],
-                text=[row["Source"]],
+                text=[row["Source"]] if pd.isna(row["Epsilon"]) else None,
                 textposition="top center",
                 marker=dict(
-                    color=row["_color"], size=16, line=dict(color="white", width=2)
+                    color=row["_color"],
+                    size=16,
+                    line=dict(color="white", width=2),
+                ),
+                hovertemplate=(
+                    f"{row['Source']}<br>"
+                    "Privacy risk: %{x:.2f}%<br>"
+                    "F1 macro: %{y:.2f}%"
+                    "<extra></extra>"
                 ),
             )
         )
@@ -173,7 +181,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
         xaxis=dict(
             title="Privacy risk — singling-out multivariate (↓ safer)",
             tickformat=".3f",
-            range=[0, 10],
+            range=[0, 11],
         ),
         yaxis=dict(
             title="Utility — F1 macro (↑ better)",

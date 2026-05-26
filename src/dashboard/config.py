@@ -12,7 +12,7 @@ COLORS: dict[str, str] = {
 }
 
 DEFAULT_COLOR = "#94A3B8"
-EPSILON_SHADE: dict[float, float] = {0.1: 0.30, 1.0: 0.55, 5.0: 0.75, 10.0: 1.0}
+EPSILON_SHADE: dict[float, float] = {0.1: 0.20, 0.5: 0.4, 1.0: 0.6, 5.0: 0.8, 10.0: 1.0}
 GRID_COLOR = "#E5E7EB"
 TRANSPARENT = "rgba(0,0,0,0)"
 
