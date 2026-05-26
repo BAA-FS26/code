@@ -5,48 +5,22 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.dashboard.charts import (
-    dp_epsilon_chart,
-    dp_metric_grid,
-    grouped_metric_bars,
-    heatmap,
-    to_percent,
-)
+from src.dashboard.charts.categorical import grouped_metric_bars
+from src.dashboard.charts.dp import dp_epsilon_chart, dp_metric_grid
+from src.dashboard.charts.heatmaps import heatmap
+from src.dashboard.display import build_base_row
 from src.dashboard.loader import (
     Result,
     RunMode,
+    add_percent_metrics,
     epsilon_of,
-    filter_results,
+    prepare_records,
     result_key,
-    run_date,
-    run_timestamp,
-    select_runs,
-    source_label,
     summary,
     synthesizer_key,
 )
+from src.dashboard.metrics import DCR_KEYS, PRIVACY_KEYS, PRIVACY_METRICS
 from src.utility.constants import DP_SYNTHESIZERS
-
-PRIVACY_METRICS = [
-    "Singling Out (multivariate)",
-    "Inference (income)",
-    "Inference (occupation)",
-    "Inference (sex)",
-    "Inference (relationship)",
-]
-PRIVACY_KEYS = {
-    "Singling Out (univariate)": "singling_out_risk_univariate",
-    "Singling Out (multivariate)": "singling_out_risk_multivariate",
-    "Linkability": "linkability_risk",
-    "Inference (income)": "inference_risk_income",
-    "Inference (occupation)": "inference_risk_occupation",
-    "Inference (sex)": "inference_risk_sex",
-    "Inference (relationship)": "inference_risk_relationship",
-}
-DCR_KEYS = {
-    "DCR-Baseline-Protection": "dcr_baseline_protection",
-    "DCR-Overfitting-Protection": "dcr_overfitting_protection",
-}
 
 
 def render_privacy_tab(
@@ -62,10 +36,12 @@ def render_privacy_tab(
         "Anonymeter (singling-out, linkability, inference) and SDMetrics DCR analysis."
     )
 
-    filtered = select_runs(
-        filter_results(records, selected_synths, selected_epsilons),
+    filtered = prepare_records(
+        records,
+        selected_synths,
+        selected_epsilons,
         result_key,
-        run_mode, 
+        run_mode,
         selected_date,
     )
     if not filtered:
@@ -111,20 +87,11 @@ def build_privacy_rows(records: list[Result]) -> list[dict]:
     for record in sorted(
         records, key=lambda item: (synthesizer_key(item), epsilon_of(item) or 0)
     ):
-        synth = synthesizer_key(record)
-        epsilon = epsilon_of(record)
         metrics = summary(record)
-        row = {
-            "Source": source_label(synth, epsilon),
-            "Synthesizer": synth,
-            "Epsilon": epsilon,
-            "Run date": run_date(record),
-            "Timestamp": run_timestamp(record),
-        }
-        for label, key in PRIVACY_KEYS.items():
-            row[label] = to_percent(metrics.get(key))
-        for label, key in DCR_KEYS.items():
-            row[label] = to_percent(metrics.get(key))
+        row = build_base_row(record)
+        metrics = summary(record)
+        add_percent_metrics(row, metrics, PRIVACY_KEYS)
+        add_percent_metrics(row, metrics, DCR_KEYS)
         rows.append(row)
     return rows
 

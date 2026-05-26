@@ -5,31 +5,21 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.dashboard.charts import dp_metric_grid, grouped_metric_bars, to_percent
+from src.dashboard.charts.categorical import grouped_metric_bars
+from src.dashboard.charts.dp import dp_metric_grid
+from src.dashboard.display import build_base_row
 from src.dashboard.loader import (
     Result,
     RunMode,
+    add_percent_metrics,
     epsilon_of,
-    filter_results,
+    prepare_records,
     result_key,
-    run_date,
-    run_timestamp,
-    select_runs,
-    source_label,
     summary,
     synthesizer_key,
 )
+from src.dashboard.metrics import FIDELITY_KEYS, FIDELITY_METRICS
 from src.utility.constants import DP_SYNTHESIZERS
-
-FIDELITY_METRICS = ["Column shapes", "Column-pair trends", "Quality overall"]
-FIDELITY_KEYS = {
-    "Quality overall": "quality_overall",
-    "Column shapes": "quality_column_shapes",
-    "Column-pair trends": "quality_column_pair_trends",
-    "Diagnostic overall": "diagnostic_overall",
-    "Data validity": "diagnostic_data_validity",
-    "Data structure": "diagnostic_data_structure",
-}
 
 
 def render_fidelity_tab(
@@ -45,10 +35,12 @@ def render_fidelity_tab(
         "properties of the real data? Measured via SDMetrics quality analysis"
     )
 
-    filtered = select_runs(
-        filter_results(records, selected_synths, selected_epsilons),
+    filtered = prepare_records(
+        records,
+        selected_synths,
+        selected_epsilons,
         result_key,
-        run_mode,  
+        run_mode,
         selected_date,
     )
     if not filtered:
@@ -107,18 +99,9 @@ def build_fidelity_rows(records: list[Result]) -> list[dict]:
     for record in sorted(
         records, key=lambda item: (synthesizer_key(item), epsilon_of(item) or 0)
     ):
-        synth = synthesizer_key(record)
-        epsilon = epsilon_of(record)
-        metrics = summary(record)
-        row = {
-            "Source": source_label(synth, epsilon),
-            "Synthesizer": synth,
-            "Epsilon": epsilon,
-            "Run date": run_date(record),
-            "Timestamp": run_timestamp(record),
-        }
-        for label, key in FIDELITY_KEYS.items():
-            row[label] = to_percent(metrics.get(key))
+        row = build_base_row(record)
+        row = build_base_row(record)
+        add_percent_metrics(row, summary(record), FIDELITY_KEYS)
         rows.append(row)
     return rows
 

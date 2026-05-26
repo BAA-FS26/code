@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping, cast
 
 import streamlit as st
 
@@ -17,6 +17,7 @@ from src.dashboard.config import (
     EPSILON_SHADE,
     SYNTHESIZER_LABELS,
 )
+from src.dashboard.display import source_label
 from src.utility.constants import DP_SYNTHESIZERS
 
 LOGGER = logging.getLogger(__name__)
@@ -190,26 +191,6 @@ def epsilon_of(record: Result) -> float | None:
     return None
 
 
-def source_label(synth: str, epsilon: float | None) -> str:
-    """Return a readable label for a synthesizer/epsilon pair."""
-    label = SYNTHESIZER_LABELS.get(synth, synth)
-    return f"{label} ε={epsilon:g}" if epsilon is not None else label
-
-
-def get_color(synth: str, epsilon: float | None = None) -> str:
-    """Return a stable color for a synthesizer/epsilon pair."""
-    base_hex = COLORS.get(synth, DEFAULT_COLOR)
-    if epsilon is None or synth not in DP_SYNTHESIZERS:
-        return base_hex
-
-    shade = EPSILON_SHADE.get(epsilon, 1.0)
-    red, green, blue = (int(base_hex[i : i + 2], 16) for i in (1, 3, 5))
-    shaded = [
-        round(channel * shade + 255 * (1 - shade)) for channel in (red, green, blue)
-    ]
-    return "#{:02X}{:02X}{:02X}".format(*shaded)
-
-
 def latest_by(
     records: Iterable[Result],
     key_fn: Callable[[Result], RecordKey],
@@ -261,3 +242,42 @@ def filter_results(
         filtered.append(record)
 
     return filtered
+
+
+def prepare_records(
+    records: Iterable[Result],
+    selected_synths: set[str],
+    selected_epsilons: set[float],
+    key_fn: Callable[[Result], RecordKey],
+    run_mode: RunMode,
+    selected_date: str | None,
+) -> list[Result]:
+    """Apply dashboard filters and run selection in one step."""
+    return select_runs(
+        filter_results(records, selected_synths, selected_epsilons),
+        key_fn,
+        run_mode,
+        selected_date,
+    )
+
+
+def add_percent_metrics(
+    row: dict[str, Any],
+    metrics: Mapping[str, Any],
+    metric_keys: Mapping[str, str],
+) -> dict[str, Any]:
+    """Add percent-converted metric values to a dashboard dataframe row."""
+    for label, key in metric_keys.items():
+        row[label] = to_percent(metrics.get(key))
+    return row
+
+
+def to_percent(value: object) -> float | None:
+    """Convert result metrics stored as 0..1 fractions into percentage points."""
+    if value is None:
+        return None
+
+    try:
+        return float(cast(float, value)) * 100
+    except (TypeError, ValueError):
+        return None

@@ -6,16 +6,15 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.dashboard.charts import apply_common_layout
+from src.dashboard.charts.base import apply_common_layout, synth_label
+from src.dashboard.display import get_color
 from src.dashboard.loader import (
     Result,
     RunMode,
     epsilon_of,
-    filter_results,
-    get_color,
+    prepare_records,
     result_key,
     run_date,
-    select_runs,
     source_label,
     summary,
     synthesizer_key,
@@ -77,14 +76,20 @@ def build_tradeoff_dataframe(
     selected_date: str | None,
 ) -> pd.DataFrame:
     """Combine average utility F1 and privacy risk by synthesizer/epsilon."""
-    utility_latest = select_runs(
-        filter_results(utility_records, selected_synths, selected_epsilons),
+
+    utility_latest = prepare_records(
+        utility_records,
+        selected_synths,
+        selected_epsilons,
         utility_key,
         run_mode,
         selected_date,
     )
-    privacy_latest = select_runs(
-        filter_results(privacy_records, selected_synths, selected_epsilons),
+
+    privacy_latest = prepare_records(
+        privacy_records,
+        selected_synths,
+        selected_epsilons,
         result_key,
         run_mode,
         selected_date,
@@ -154,14 +159,25 @@ def build_tradeoff_dataframe(
 def render_tradeoff_scatter(df: pd.DataFrame) -> None:
     """Render privacy risk vs. utility scatter chart."""
     fig = go.Figure()
+    legend_seen: set[str] = set()
+
     for _, row in df.iterrows():
+        synth = str(row["Synth"])
+        epsilon = row["Epsilon"]
+
+        is_non_dp = pd.isna(epsilon)
+        show_legend = not is_non_dp and synth not in legend_seen
+
+        if show_legend:
+            legend_seen.add(synth)
+
         fig.add_trace(
             go.Scatter(
                 x=[row[RISK_COLUMN]],
                 y=[row[F1_COLUMN]],
-                mode="markers+text" if pd.isna(row["Epsilon"]) else "markers",
-                name=row["Source"],
-                text=[row["Source"]] if pd.isna(row["Epsilon"]) else None,
+                mode="markers+text" if is_non_dp else "markers",
+                name=synth_label(synth),
+                text=[row["Source"]] if is_non_dp else None,
                 textposition="top center",
                 marker=dict(
                     color=row["_color"],
@@ -174,6 +190,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
                     "F1 macro: %{y:.2f}%"
                     "<extra></extra>"
                 ),
+                showlegend=show_legend,
             )
         )
 
@@ -194,7 +211,7 @@ def render_tradeoff_scatter(df: pd.DataFrame) -> None:
             fig,
             title="Privacy-utility trade-off (average F1 vs singling-out multivariate risk)",
             height=500,
-            bottom_margin=100,
+            bottom_margin=70,
             hovermode="closest",
         ),
         use_container_width=True,

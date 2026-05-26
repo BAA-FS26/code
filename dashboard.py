@@ -17,9 +17,7 @@ from src.dashboard.tabs.utility import render_utility_tab
 from src.utility.constants import RESULTS_DIR
 
 APP_TITLE = "Evaluating Synthetic Data as PET"
-APP_CAPTION = (
-    "Bachelor Thesis · HSLU · FS26 · " "Adult Census Income dataset"
-)
+APP_CAPTION = "Bachelor Thesis · HSLU · FS26 · Adult Census Income dataset"
 TAB_TITLES = ["Utility", "Privacy", "Trade-off", "Fidelity"]
 
 

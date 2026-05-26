@@ -6,31 +6,21 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.dashboard.charts import (
-    apply_common_layout,
-    dp_epsilon_chart,
-    to_percent,
-)
+from src.dashboard.charts.base import apply_common_layout
+from src.dashboard.charts.dp import dp_epsilon_chart
 from src.dashboard.config import CLASSIFIER_LABELS
+from src.dashboard.display import build_base_row, get_color
 from src.dashboard.loader import (
     Result,
     RunMode,
     classifier_key,
-    epsilon_of,
-    filter_results,
-    get_color,
-    run_date,
-    run_timestamp,
-    select_runs,
-    source_label,
+    prepare_records,
     summary,
-    synthesizer_key,
+    to_percent,
     utility_key,
 )
+from src.dashboard.metrics import RAW_TABLE_COLUMNS
 from src.utility.constants import DP_SYNTHESIZERS
-
-METRIC_COLUMNS = ["Accuracy", "Precision", "Recall", "F1 (macro)"]
-RAW_TABLE_COLUMNS = ["Source", "Classifier", "Run date", *METRIC_COLUMNS]
 
 
 def render_utility_tab(
@@ -46,8 +36,10 @@ def render_utility_tab(
         "on real held-out test data? *(TSTR — Train on Synthetic, Test on Real)*"
     )
 
-    selected_records = select_runs(
-        filter_results(records, selected_synths, selected_epsilons),
+    selected_records = prepare_records(
+        records,
+        selected_synths,
+        selected_epsilons,
         utility_key,
         run_mode,
         selected_date,
@@ -79,20 +71,15 @@ def build_utility_rows(records: list[Result]) -> list[dict]:
     rows: list[dict] = []
 
     for record in records:
-        synth = synthesizer_key(record)
-        epsilon = epsilon_of(record)
         classifier = classifier_key(record)
         metrics = summary(record)
 
-        rows.append(
+        row = build_base_row(record)
+
+        row.update(
             {
-                "Source": source_label(synth, epsilon),
-                "Synthesizer": synth,
-                "Epsilon": epsilon,
                 "ClassifierKey": classifier,
                 "Classifier": CLASSIFIER_LABELS.get(classifier, classifier),
-                "Run date": run_date(record),
-                "Timestamp": run_timestamp(record),
                 "Accuracy": to_percent(metrics.get("test_accuracy")),
                 "Precision": to_percent(metrics.get("test_precision_macro")),
                 "Recall": to_percent(metrics.get("test_recall_macro")),

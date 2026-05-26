@@ -1,70 +1,9 @@
-"""Reusable Plotly chart helpers"""
-
-from __future__ import annotations
-
-from numbers import Real
-from typing import TypeAlias, cast
+""" """
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-from src.dashboard.config import COLORS, GRID_COLOR, SYNTHESIZER_LABELS, TRANSPARENT
-
-FormattableValue: TypeAlias = Real | str | None
-
-
-def apply_common_layout(
-    fig: go.Figure,
-    *,
-    height: int = 420,
-    bottom_margin: int = 80,
-    title: str | None = None,
-    hovermode: str | None = "x unified",
-) -> go.Figure:
-    """Apply a shared scientific/dashboard chart style."""
-    fig.update_layout(
-        title=title,
-        height=height,
-        plot_bgcolor=TRANSPARENT,
-        paper_bgcolor=TRANSPARENT,
-        margin=dict(t=70 if title else 50, b=bottom_margin, l=60, r=30),
-        legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center", yanchor="bottom"),
-        hovermode=hovermode,
-    )
-    fig.update_xaxes(showgrid=True, gridcolor=GRID_COLOR, zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor=GRID_COLOR, zeroline=False)
-    return fig
-
-
-def format_value(value: FormattableValue, spec: str = ".3f") -> str:
-    """Format numeric values for chart labels."""
-    if value is None:
-        return "—"
-    if isinstance(value, Real):
-        return f"{float(value):{spec}}"
-    return value
-
-
-def to_percent(value: object) -> float | None:
-    """Convert result metrics stored as 0..1 fractions into percentage points."""
-    if value is None:
-        return None
-
-    try:
-        return float(cast(float, value)) * 100
-    except (TypeError, ValueError):
-        return None
-
-
-def synth_label(synth: str) -> str:
-    """Return display label for a synthesizer without epsilon."""
-    return SYNTHESIZER_LABELS.get(synth, synth)
-
-
-def synth_color(synth: str) -> str:
-    """Return thesis-style color for a synthesizer."""
-    return COLORS.get(synth, "#94A3B8")
+from src.dashboard.charts.base import apply_common_layout, synth_color, synth_label
 
 
 def add_baseline_line(
@@ -88,8 +27,8 @@ def add_baseline_line(
             line_width=2,
             annotation_text=annotation_text,
             annotation_position=annotation_position,
-            row=row,   # type: ignore
-            col=col,   # type: ignore
+            row=row,  # type: ignore[arg-type]
+            col=col,  # type: ignore[arg-type]
         )
     else:
         fig.add_hline(
@@ -288,83 +227,3 @@ def hide_empty_subplots(
         col = idx % cols + 1
         fig.update_xaxes(visible=False, row=row, col=col)
         fig.update_yaxes(visible=False, row=row, col=col)
-
-
-def grouped_metric_bars(
-    df: pd.DataFrame,
-    *,
-    metrics: list[str],
-    metric_labels: list[str],
-    title: str,
-    y_title: str,
-    y_range: list[float] | None = None,
-    reference_line: float | None = None,
-) -> go.Figure:
-    """Create thesis-style grouped bars for non-DP synthesizer comparisons."""
-    fig = go.Figure()
-
-    for metric, label in zip(metrics, metric_labels):
-        fig.add_trace(
-            go.Bar(
-                name=label,
-                x=df["Source"],
-                y=df[metric],
-                text=[format_value(value, ".1f") for value in df[metric]],
-                textposition="outside",
-            )
-        )
-
-    if reference_line is not None:
-        fig.add_hline(
-            y=reference_line,
-            line_dash="dash",
-            line_color="#111827",
-            line_width=2,
-            annotation_text=f"reference: {reference_line:g} %",
-            annotation_position="top left",
-        )
-
-    fig.update_layout(barmode="group")
-    fig.update_yaxes(title_text=y_title, range=y_range)
-
-    return apply_common_layout(fig, title=title, height=500, bottom_margin=80)
-
-
-def heatmap(
-    df: pd.DataFrame,
-    *,
-    x: str,
-    y: str,
-    z: str,
-    title: str,
-    colorbar_title: str,
-    zmin: float | None = None,
-    zmax: float | None = None,
-) -> go.Figure:
-    """Create an annotated heatmap."""
-    pivot = df.pivot_table(index=y, columns=x, values=z, aggfunc="first")
-
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=pivot.values,
-            x=list(pivot.columns),
-            y=list(pivot.index),
-            colorscale="Blues",
-            zmin=zmin,
-            zmax=zmax,
-            colorbar=dict(title=colorbar_title),
-            text=[
-                [format_value(value, ".2f") for value in row] for row in pivot.values
-            ],
-            texttemplate="%{text}",
-            hovertemplate="%{y}<br>%{x}: %{z:.2f}<extra></extra>",
-        )
-    )
-
-    return apply_common_layout(
-        fig,
-        title=title,
-        height=460,
-        bottom_margin=70,
-        hovermode=None,
-    )
