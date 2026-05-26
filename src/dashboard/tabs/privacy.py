@@ -92,7 +92,7 @@ def render_privacy_tab(
                 y_title="Risk (%)",
                 y_range=[
                     -0.5,
-                    max(8, df[PRIVACY_METRICS].max(numeric_only=True).max() * 1.15),
+                    10,
                 ],
                 cols=3,
                 height=720,
@@ -165,7 +165,7 @@ def render_dp_dcr(df: pd.DataFrame, non_dp_df: pd.DataFrame) -> None:
         )
 
     fig.update_xaxes(title_text="Privacy-Budget ε", type="log")
-    fig.update_yaxes(title_text="DCR-Baseline-Protection (%)")
+    fig.update_yaxes(title_text="DCR-Baseline-Protection (%)", range=[0, 100])
     st.plotly_chart(
         apply_common_layout(
             fig, title="DCR Baseline Protection of DP Synthesizer across ε", height=520
@@ -216,7 +216,7 @@ def render_non_dp_dcr(non_dp_df: pd.DataFrame) -> None:
             metric_labels=["DCR-Baseline-Protection"],
             title="DCR Baseline Protection of SDV Synthesizer",
             y_title="DCR-Baseline-Protection (%)",
-            y_range=[0, max(80, float(dcr_df["DCR-Baseline-Protection"].max()) * 1.25)],
+            y_range=[0, 100],
         ),
         use_container_width=True,
     )
