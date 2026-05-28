@@ -8,7 +8,10 @@ import streamlit as st
 from src.dashboard.charts.categorical import grouped_metric_bars
 from src.dashboard.charts.dp import dp_epsilon_chart, dp_metric_grid
 from src.dashboard.charts.heatmaps import heatmap
-from src.dashboard.dataset_views import build_privacy_metric_config
+from src.dashboard.dataset_views import (
+    build_privacy_metric_config,
+    build_privacy_raw_metric_config,
+)
 from src.dashboard.loader import (
     Result,
     RunMode,
@@ -36,7 +39,8 @@ def render_privacy_tab(
         "**FF2 — Privacy:** Re-identification and inference risks measured via "
         "Anonymeter (singling-out, linkability, inference) and SDMetrics DCR analysis."
     )
-    privacy_metrics, privacy_keys = build_privacy_metric_config()
+    privacy_metrics, privacy_chart_keys = build_privacy_metric_config()
+    privacy_raw_keys = build_privacy_raw_metric_config()
 
     filtered = prepare_records(
         records,
@@ -50,7 +54,7 @@ def render_privacy_tab(
         st.info("No privacy results match the current filter.")
         return
 
-    df = pd.DataFrame(build_privacy_rows(filtered, privacy_keys))
+    df = pd.DataFrame(build_privacy_rows(filtered, privacy_raw_keys))
     dp_df = df[df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].notna()]
     non_dp_df = df[~df["Synthesizer"].isin(DP_SYNTHESIZERS) & df["Epsilon"].isna()]
 

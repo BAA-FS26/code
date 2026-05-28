@@ -26,6 +26,7 @@ dependencies = [
 
     # Dashboard
     "streamlit=1.57.0",
+    "plotly==6.6.0",
 
     # Deep learning runtime
     # Install the appropriate torch build for your platform/environment.

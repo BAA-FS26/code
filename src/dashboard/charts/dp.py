@@ -19,26 +19,25 @@ def add_baseline_line(
     annotation_position: str = "right",
 ) -> None:
     """Add one dashed horizontal baseline line and optional legend entry."""
+    hline_kwargs = dict(
+        y=value,
+        line_dash="dash",
+        line_color=color,
+        line_width=2,
+    )
+
+    if annotation_text:
+        hline_kwargs["annotation_text"] = annotation_text
+        hline_kwargs["annotation_position"] = annotation_position
+
     if row is not None and col is not None:
         fig.add_hline(
-            y=value,
-            line_dash="dash",
-            line_color=color,
-            line_width=2,
-            annotation_text=annotation_text,
-            annotation_position=annotation_position,
+            **hline_kwargs, # type: ignore
             row=row,  # type: ignore[arg-type]
             col=col,  # type: ignore[arg-type]
         )
     else:
-        fig.add_hline(
-            y=value,
-            line_dash="dash",
-            line_color=color,
-            line_width=2,
-            annotation_text=annotation_text,
-            annotation_position=annotation_position,
-        )
+        fig.add_hline(**hline_kwargs) # type: ignore
 
     baseline_trace = go.Scatter(
         x=[None],
@@ -80,7 +79,7 @@ def add_baseline_lines(
             row=row,
             col=col,
             showlegend=showlegend,
-            annotation_text=label if annotate else None,
+            annotation_text=label if annotate and row is None and col is None else None,
         )
 
 
