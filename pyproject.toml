@@ -25,7 +25,7 @@ dependencies = [
     "anonymeter @ git+https://github.com/statice/anonymeter.git@714ff2cee36803e8acf07691860d75fdaf00fec7",
 
     # Dashboard
-    "streamlit=1.57.0",
+    "streamlit==1.57.0",
     "plotly==6.6.0",
 
     # Deep learning runtime
